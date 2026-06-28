@@ -1,0 +1,36 @@
+Lensfun Lens Correction — a Safelight extension
+Copyright (c) 2026 Anthony Reimche
+The extension source code is licensed under the MIT License (see LICENSE).
+
+--------------------------------------------------------------------------------
+Lens database
+--------------------------------------------------------------------------------
+
+The bundled lens-correction database (data/lens-profiles.json and the copy in
+dist/data/) is derived from the Lensfun project's lens database:
+
+    https://lensfun.github.io/
+    https://github.com/lensfun/lensfun
+
+The Lensfun lens database is distributed under the Creative Commons
+Attribution-ShareAlike 3.0 Unported license (CC BY-SA 3.0):
+
+    https://creativecommons.org/licenses/by-sa/3.0/
+
+The JSON file shipped here is a format conversion of that database (camera and
+lens calibration coefficients for distortion, transverse chromatic aberration,
+and vignetting). It remains licensed under CC BY-SA 3.0; this NOTICE preserves
+the required attribution and share-alike terms. Modifications to the calibration
+data, if any, are likewise available under CC BY-SA 3.0.
+
+The MIT license of this extension's source code does NOT relicense the lens
+database; the database keeps its CC BY-SA 3.0 terms.
+
+--------------------------------------------------------------------------------
+Adobe Lens Profile (.lcp) import
+--------------------------------------------------------------------------------
+
+This extension can read Adobe Lens Profile (.lcp) files supplied by the user.
+"Adobe" and "Lightroom" are trademarks of Adobe Inc. This project is not
+affiliated with or endorsed by Adobe. No Adobe lens profiles are redistributed
+with this extension; users import their own.

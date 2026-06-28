@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# dist/ is intentionally committed — Safelight installs the prebuilt bundle
+# (with the lens database inlined); there is no build step on the user's machine.
