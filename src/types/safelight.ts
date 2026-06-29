@@ -205,6 +205,23 @@ export interface SafelightAPI {
     onChange(cb: (key: string, value: unknown) => void): () => void;
   };
   components: Record<string, any>;
+  ui?: {
+    Button: any;
+    Select: any;
+    TextInput: any;
+    NumberInput: any;
+    TextArea: any;
+    Toggle: any;
+    SegmentedControl: any;
+    Field: any;
+    Section: any;
+    Card: any;
+    Badge: any;
+    ProgressBar: any;
+    Row: any;
+    Stack: any;
+    tokens: Record<string, string>;
+  };
   stores: {
     useDevelopStore: StoreApi<DevelopStoreState>;
     useCatalogStore: StoreApi<CatalogStoreState>;

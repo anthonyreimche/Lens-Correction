@@ -1,6 +1,6 @@
 {
   "name": "safelight-lens-correction",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Lens Correction extension for Safelight, powered by the Lensfun database.",
   "license": "MIT",
   "author": "Anthony Reimche",

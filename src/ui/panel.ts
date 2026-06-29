@@ -1,8 +1,8 @@
 // Lens Correction for Safelight — MIT licensed (see LICENSE).
 // The develop panel + manual lens picker, built with React.createElement off
-// api.react (runtime bundles can't use JSX/Tailwind). Styling uses theme CSS
-// variables via inline styles, and api.components.{Panel,Slider} for parity
-// with the rest of the app where available.
+// api.react (runtime bundles can't use JSX/Tailwind). Controls use the shared
+// core UI kit (api.ui) for parity with the rest of the app; remaining inline
+// styles use theme CSS variables, plus api.components.{Panel,Slider}.
 
 import type { SafelightAPI } from "../types/safelight";
 import type { LensState, LensMode } from "../params";
@@ -33,13 +33,14 @@ const SOURCE_LABEL: Record<string, string> = {
 export function createLensPanel(api: SafelightAPI) {
   const React = api.react;
   const h = React.createElement;
+  const ui = api.ui;
   const useUI = getUIStore();
   const commit = (label: string) =>
     void api.stores.useDevelopStore.getState().commitEdit(label);
 
   // ── Small themed primitives ──
   const text = {
-    color: "var(--color-text)",
+    color: "var(--color-text-primary)",
     fontSize: 11,
   } as const;
   const subtext = {
@@ -48,33 +49,12 @@ export function createLensPanel(api: SafelightAPI) {
   } as const;
 
   function ModeToggle(props: { mode: LensMode }) {
-    return h(
-      "div",
-      { style: { display: "flex", gap: 2, padding: 2 } },
-      MODES.map((m) =>
-        h(
-          "button",
-          {
-            key: m.value,
-            onClick: () => updateState({ mode: m.value }, "Lens Mode"),
-            style: {
-              flex: 1,
-              padding: "2px 6px",
-              fontSize: 11,
-              borderRadius: 4,
-              border: "none",
-              cursor: "pointer",
-              background:
-                props.mode === m.value
-                  ? "var(--color-accent)"
-                  : "var(--color-surface-2)",
-              color: props.mode === m.value ? "#fff" : "var(--color-text-secondary)",
-            },
-          },
-          m.label,
-        ),
-      ),
-    );
+    return h(ui!.SegmentedControl, {
+      value: props.mode,
+      onChange: (v: string) => updateState({ mode: v as LensMode }, "Lens Mode"),
+      options: MODES,
+      size: "sm",
+    });
   }
 
   function Toggle(props: { label: string; checked: boolean; onChange: () => void }) {
@@ -217,23 +197,14 @@ export function createLensPanel(api: SafelightAPI) {
         h(
           "div",
           { style: { padding: 8, borderBottom: "1px solid var(--color-border)" } },
-          h("input", {
-            type: "text",
-            autoFocus: true,
-            placeholder: "Search lenses…",
-            "aria-label": "Search lenses",
+          h(ui!.TextInput, {
             value: query,
-            onChange: (e: { target: { value: string } }) => setQuery(e.target.value),
-            style: {
-              width: "100%",
-              padding: "4px 8px",
-              fontSize: 12,
-              background: "var(--color-surface-2)",
-              color: "var(--color-text)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 4,
-              outline: "none",
-            },
+            onChange: (v: string) => setQuery(v),
+            placeholder: "Search lenses…",
+            // TextInput forwards native input attrs, so focus-on-open + the
+            // accessible name are preserved through the kit.
+            autoFocus: true,
+            "aria-label": "Search lenses",
           }),
         ),
         h(
@@ -262,36 +233,31 @@ export function createLensPanel(api: SafelightAPI) {
                     ),
                     lenses.map((l: LensfunLens) =>
                       h(
-                        "button",
+                        ui!.Button,
                         {
                           key: l.id,
+                          variant: "ghost",
+                          size: "sm",
+                          full: true,
                           onClick: () => {
                             pickLens(l.id, `${l.maker} ${l.model}`);
                             props.onClose();
                           },
-                          style: {
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "4px 8px",
-                            fontSize: 11,
-                            color: "var(--color-text)",
-                            background: "transparent",
-                            border: "none",
-                            borderRadius: 4,
-                            cursor: "pointer",
-                          },
                         },
-                        h("span", null, l.model),
-                        l.focalMin > 0
-                          ? h(
-                              "span",
-                              { style: { marginLeft: 6, color: "var(--color-text-tertiary)" } },
-                              l.focalMin === l.focalMax
-                                ? `${l.focalMin}mm`
-                                : `${l.focalMin}-${l.focalMax}mm`,
-                            )
-                          : null,
+                        h(
+                          "span",
+                          { style: { display: "flex", width: "100%", textAlign: "left" } },
+                          h("span", null, l.model),
+                          l.focalMin > 0
+                            ? h(
+                                "span",
+                                { style: { marginLeft: 6, color: "var(--color-text-muted)" } },
+                                l.focalMin === l.focalMax
+                                  ? `${l.focalMin}mm`
+                                  : `${l.focalMin}-${l.focalMax}mm`,
+                              )
+                            : null,
+                        ),
                       ),
                     ),
                   ),
@@ -301,36 +267,31 @@ export function createLensPanel(api: SafelightAPI) {
           "div",
           { style: { padding: 8, borderTop: "1px solid var(--color-border)", display: "flex", justifyContent: "space-between" } },
           h(
-            "button",
+            ui!.Button,
             {
+              variant: "ghost",
+              size: "sm",
               onClick: () => {
                 updateState({ lensId: null, pref: "auto" }, "Auto Lens");
                 props.onClose();
               },
-              style: btnStyle("ghost"),
             },
             "Auto-detect",
           ),
-          h("button", { onClick: props.onClose, style: btnStyle("ghost") }, "Cancel"),
+          h(ui!.Button, { variant: "ghost", size: "sm", onClick: props.onClose }, "Cancel"),
         ),
       ),
     );
   }
 
-  function btnStyle(kind: "ghost"): Record<string, unknown> {
-    return {
-      padding: "4px 12px",
-      fontSize: 11,
-      borderRadius: 4,
-      border: "none",
-      cursor: "pointer",
-      background: kind === "ghost" ? "var(--color-surface-2)" : "var(--color-accent)",
-      color: "var(--color-text-secondary)",
-    };
-  }
-
   // ── The panel ──
   function LensPanel() {
+    if (!api.ui)
+      return h(
+        "div",
+        { style: { padding: "10px", fontSize: "11px", color: "var(--color-text-muted)" } },
+        "Update Safelight to use this panel.",
+      );
     const state = useUI((s: { state: LensState }) => s.state);
     const detectedName = useUI((s: { detectedName: string | null }) => s.detectedName);
     const source = useUI((s: { source: string | null }) => s.source);
@@ -362,23 +323,24 @@ export function createLensPanel(api: SafelightAPI) {
                         padding: "1px 4px",
                         borderRadius: 3,
                         background: "var(--color-surface-2)",
-                        color: "var(--color-text-tertiary)",
+                        color: "var(--color-text-muted)",
                       },
                     },
                     SOURCE_LABEL[source] ?? source,
                   )
                 : null,
               h(
-                "button",
-                { onClick: () => setPickerOpen(true), title: "Choose lens manually", style: { ...btnStyle("ghost"), padding: "1px 6px", fontSize: 10 } },
+                ui!.Button,
+                { variant: "ghost", size: "sm", onClick: () => setPickerOpen(true), title: "Choose lens manually" },
                 "Edit",
               ),
               h(
-                "button",
+                ui!.Button,
                 {
+                  variant: "ghost",
+                  size: "sm",
                   onClick: () => lcpInputRef.current && lcpInputRef.current.click(),
                   title: "Import an Adobe Lens Profile (.lcp)",
-                  style: { ...btnStyle("ghost"), padding: "1px 6px", fontSize: 10 },
                 },
                 "LCP",
               ),
@@ -397,7 +359,7 @@ export function createLensPanel(api: SafelightAPI) {
             !detectedName
               ? h(
                   "div",
-                  { style: { fontSize: 10, fontStyle: "italic", color: "var(--color-text-tertiary)" } },
+                  { style: { fontSize: 10, fontStyle: "italic", color: "var(--color-text-muted)" } },
                   "No matching profile found. Click Edit to select a lens.",
                 )
               : null,
@@ -426,12 +388,12 @@ export function createLensPanel(api: SafelightAPI) {
             "div",
             { key: "autoca", style: { display: "flex", alignItems: "center", gap: 6, padding: "2px 0" } },
             h(
-              "button",
-              { disabled: busy, onClick: () => void runAutoCa(), title: "Estimate chromatic aberration from the image", style: { ...btnStyle("ghost"), opacity: busy ? 0.6 : 1 } },
+              ui!.Button,
+              { variant: "ghost", size: "sm", disabled: busy, onClick: () => void runAutoCa(), title: "Estimate chromatic aberration from the image" },
               busy ? "Analyzing…" : "Auto CA",
             ),
             state.caAuto
-              ? h("button", { onClick: clearAutoCa, style: { ...btnStyle("ghost"), fontSize: 10 } }, "Clear")
+              ? h(ui!.Button, { variant: "ghost", size: "sm", onClick: clearAutoCa }, "Clear")
               : null,
           )
         : null;
@@ -442,10 +404,12 @@ export function createLensPanel(api: SafelightAPI) {
             "div",
             { key: "adv", style: { display: "flex", flexDirection: "column", gap: 1 } },
             h(
-              "button",
+              ui!.Button,
               {
+                variant: "ghost",
+                size: "sm",
+                full: true,
                 onClick: () => setAdvancedOpen(!advancedOpen),
-                style: { ...btnStyle("ghost"), width: "100%", textAlign: "left", fontSize: 10 },
               },
               (advancedOpen ? "▾ " : "▸ ") + "Advanced defringe",
             ),
@@ -462,7 +426,7 @@ export function createLensPanel(api: SafelightAPI) {
         : null;
 
     const statusLine = status
-      ? h("div", { key: "status", style: { fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 2 } }, status)
+      ? h("div", { key: "status", style: { fontSize: 10, color: "var(--color-text-muted)", marginTop: 2 } }, status)
       : null;
 
     const body = h(

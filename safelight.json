@@ -1,7 +1,7 @@
 {
   "id": "com.safelight.lens-correction",
   "name": "Lens Correction",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Profile, manual, and automatic lens correction — distortion, chromatic aberration, vignetting, and defringe. Powered by the Lensfun database, Adobe LCP profiles, embedded RAW correction metadata, and image-based auto CA.",
   "author": "Anthony Reimche",
   "main": "dist/index.js",
