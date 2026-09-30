@@ -40,6 +40,14 @@ export interface LensfunLens {
   distortion: DistortionCal[];
   tca: TcaCal[];
   vignetting: VignettingCal[];
+  /** Bodies this lens is built into (fixed-lens cameras only), from the Lensfun
+   *  `<camera>` blocks sharing its mount. Absent for interchangeable lenses. */
+  cameras?: LensfunCamera[];
+}
+
+export interface LensfunCamera {
+  maker: string;
+  model: string;
 }
 
 // ─── Resolved profile — interpolated coefficients ready for the shader ───────

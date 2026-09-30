@@ -12,6 +12,7 @@ import type {
   TcaCal,
   VignettingCal,
 } from "./types";
+import { lensDisplayName } from "./makers";
 
 export function resolveProfile(
   lens: LensfunLens,
@@ -21,7 +22,7 @@ export function resolveProfile(
 ): ResolvedProfile {
   return {
     lensId: lens.id,
-    lensName: `${lens.maker} ${lens.model}`,
+    lensName: lensDisplayName(lens),
     source: "lensfun",
     cropFactor: lens.cropFactor,
     distortion: resolveDistortion(lens.distortion, focalLength),

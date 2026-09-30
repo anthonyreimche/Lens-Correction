@@ -16,6 +16,8 @@ import {
   importLcp,
 } from "../controller";
 import { loadLensDb, getCachedLensDb } from "../db/loader";
+import { lensDisplayName } from "../db/makers";
+import { filterLenses, groupLenses, type PickerGroup, type PickerRow } from "./picker-model";
 
 const MODES: { value: LensMode; label: string }[] = [
   { value: "off", label: "Off" },
@@ -143,26 +145,8 @@ export function createLensPanel(api: SafelightAPI) {
       if (db.length === 0) void loadLensDb().then(setDb);
     }, []);
 
-    const filtered = React.useMemo(() => {
-      if (!query.trim()) return db.slice(0, 60);
-      const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-      return db
-        .filter((l: LensfunLens) => {
-          const t = `${l.maker} ${l.model}`.toLowerCase();
-          return tokens.every((tok: string) => t.includes(tok));
-        })
-        .slice(0, 60);
-    }, [query, db]);
-
-    const groups = React.useMemo(() => {
-      const m = new Map<string, LensfunLens[]>();
-      for (const l of filtered) {
-        const arr = m.get(l.maker) ?? [];
-        arr.push(l);
-        m.set(l.maker, arr);
-      }
-      return [...m.entries()];
-    }, [filtered]);
+    const filtered = React.useMemo(() => filterLenses(db, query), [query, db]);
+    const groups = React.useMemo(() => groupLenses(filtered), [filtered]);
 
     return h(
       "div",
@@ -214,10 +198,10 @@ export function createLensPanel(api: SafelightAPI) {
             ? h("div", { style: { ...subtext, textAlign: "center", padding: 16 } }, "Loading lens database…")
             : filtered.length === 0
               ? h("div", { style: { ...subtext, textAlign: "center", padding: 16 } }, `No lenses matching "${query}"`)
-              : groups.map(([maker, lenses]: [string, LensfunLens[]]) =>
+              : groups.map((group: PickerGroup) =>
                   h(
                     "div",
-                    { key: maker, style: { marginBottom: 4 } },
+                    { key: group.maker, style: { marginBottom: 4 } },
                     h(
                       "div",
                       {
@@ -229,9 +213,9 @@ export function createLensPanel(api: SafelightAPI) {
                           padding: "2px 4px",
                         },
                       },
-                      maker,
+                      group.maker,
                     ),
-                    lenses.map((l: LensfunLens) =>
+                    group.rows.map(({ lens: l, detail }: PickerRow) =>
                       h(
                         ui!.Button,
                         {
@@ -240,7 +224,7 @@ export function createLensPanel(api: SafelightAPI) {
                           size: "sm",
                           full: true,
                           onClick: () => {
-                            pickLens(l.id, `${l.maker} ${l.model}`);
+                            pickLens(l.id, lensDisplayName(l));
                             props.onClose();
                           },
                         },
@@ -248,14 +232,8 @@ export function createLensPanel(api: SafelightAPI) {
                           "span",
                           { style: { display: "flex", width: "100%", textAlign: "left" } },
                           h("span", null, l.model),
-                          l.focalMin > 0
-                            ? h(
-                                "span",
-                                { style: { marginLeft: 6, color: "var(--color-text-muted)" } },
-                                l.focalMin === l.focalMax
-                                  ? `${l.focalMin}mm`
-                                  : `${l.focalMin}-${l.focalMax}mm`,
-                              )
+                          detail
+                            ? h("span", { style: { marginLeft: 6, color: "var(--color-text-muted)" } }, detail)
                             : null,
                         ),
                       ),

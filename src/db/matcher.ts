@@ -5,54 +5,71 @@
 import type { ExifData } from "../types/safelight";
 import type { LensfunLens, ResolvedProfile } from "./types";
 import { resolveProfile } from "./interpolate";
-
-// Manufacturer names in EXIF vary wildly. Map common variants to Lensfun's
-// canonical names so we can pre-filter by maker before fuzzy-matching.
-const MAKER_ALIASES: Record<string, string> = {
-  "nikon corporation": "Nikon",
-  "canon inc.": "Canon",
-  canon: "Canon",
-  "sony corporation": "Sony",
-  sony: "Sony",
-  fujifilm: "Fujifilm",
-  "fujifilm corporation": "Fujifilm",
-  "olympus corporation": "Olympus",
-  olympus: "Olympus",
-  "om digital solutions": "Olympus",
-  panasonic: "Panasonic",
-  sigma: "Sigma",
-  "sigma corporation": "Sigma",
-  tamron: "Tamron",
-  "tamron co.,ltd.": "Tamron",
-  samyang: "Samyang",
-  "samyang optics": "Samyang",
-  leica: "Leica",
-  "leica camera ag": "Leica",
-  "carl zeiss": "Zeiss",
-  zeiss: "Zeiss",
-  hasselblad: "Hasselblad",
-  ricoh: "Ricoh",
-  pentax: "Pentax",
-  "pentax corporation": "Pentax",
-  apple: "Apple",
-  samsung: "Samsung",
-  tokina: "Tokina",
-  voigtlander: "Voigtlander",
-  cosina: "Voigtlander",
-};
-
-function canonicalMaker(raw: string): string {
-  const key = raw.trim().toLowerCase();
-  return MAKER_ALIASES[key] ?? raw.trim();
-}
+import { canonicalMaker, compact } from "./makers";
 
 interface MatchResult {
   lens: LensfunLens;
   score: number;
 }
 
-/** Find the best matching Lensfun lens for the given EXIF, or null. */
+/** Find the best matching Lensfun lens for the given EXIF, or null. A body with
+ *  a built-in lens can only be wearing that lens, so the camera decides first. */
 export function matchLens(exif: ExifData, db: LensfunLens[]): LensfunLens | null {
+  const builtIn = builtInLenses(exif, db);
+  return builtIn.length > 0 ? pickBuiltInLens(builtIn, exif.lens) : matchByLensName(exif, db);
+}
+
+// Lensfun lists extra setups for a fixed-lens body as variants of its standard
+// entry: "X & compatibles, with TCL-X100", "…, macro at 2 inches lens-to-subject",
+// "Ricoh GR III & compatibles + GW-4". "…, with CHDK's DNG" is the bare lens
+// profiled from CHDK raw files, so it stands in when there is no standard entry.
+const VARIANT = /,\s|\s\+\s/;
+const ACCESSORY = /(?:,\s*with|\s\+)\s+([^(]+)/i;
+const CHDK_DNG = /\bCHDK\b/i;
+
+function builtInLenses(exif: ExifData, db: LensfunLens[]): LensfunLens[] {
+  const body = exifBody(exif);
+  if (!body) return [];
+  return db.filter((lens) => lens.cameras?.some((cam) => bodyKey(cam.maker, cam.model) === body));
+}
+
+function exifBody(exif: ExifData): string | null {
+  return exif.cameraMake && exif.cameraModel ? bodyKey(exif.cameraMake, exif.cameraModel) : null;
+}
+
+/** A body as canonical maker plus model key, so EXIF and Lensfun spellings agree. */
+function bodyKey(make: string, model: string): string {
+  const maker = compact(canonicalMaker(make));
+  return `${maker}|${modelKey(model, maker)}`;
+}
+
+/** The body's standard lens, or a converter variant its EXIF lens string names.
+ *  Converter and macro setups are left to a manual pick: most shots are taken
+ *  without them. */
+function pickBuiltInLens(candidates: LensfunLens[], exifLens = ""): LensfunLens | null {
+  const lensKey = compact(exifLens);
+  return (
+    candidates.find((lens) => namesAccessory(lensKey, lens.model)) ??
+    candidates.find((lens) => !VARIANT.test(lens.model)) ??
+    candidates.find((lens) => CHDK_DNG.test(lens.model)) ??
+    null
+  );
+}
+
+/** Whether the EXIF lens string names the converter of a "…, with <converter>" variant. */
+function namesAccessory(exifLens: string, model: string): boolean {
+  const accessory = compact(ACCESSORY.exec(model)?.[1].replace(/\bconverter\b/i, "") ?? "");
+  return accessory.length >= 3 && exifLens.includes(accessory);
+}
+
+/** Model as letters and digits only, minus a leading maker name: EXIF writes
+ *  "Canon PowerShot G7 X" where a Lensfun entry may leave the maker off. */
+function modelKey(model: string, maker: string): string {
+  const key = compact(model);
+  return key.startsWith(maker) && key.length > maker.length ? key.slice(maker.length) : key;
+}
+
+function matchByLensName(exif: ExifData, db: LensfunLens[]): LensfunLens | null {
   if (!exif.lens) return null;
 
   const exifLens = normalize(exif.lens);
@@ -102,6 +119,14 @@ export function resolveForLens(lens: LensfunLens, exif: ExifData): ResolvedProfi
   const aperture = exif.aperture ?? lens.apertureMin;
   const distance = exif.subjectDistance ?? 1000;
   return resolveProfile(lens, focal, aperture, distance);
+}
+
+/** The key a manual lens pick is remembered under. A body with a built-in lens
+ *  is keyed by the body, since its EXIF lens string is often generic
+ *  ("8.8-36.8 mm") or missing and so shared with other bodies; any other photo
+ *  by its EXIF lens string. */
+export function rememberKey(exif: ExifData, db: LensfunLens[]): string | null {
+  return builtInLenses(exif, db).length > 0 ? `camera:${exifBody(exif)}` : exif.lens || null;
 }
 
 // ─── String matching helpers ────────────────────────────────────────────────

@@ -24,8 +24,9 @@ when you want it.
   amount, and radius.
 - **Full manual control** — distortion, fringing, defringe, and vignetting sliders, with
   auto-crop to hide the corrected borders.
-- **Smart matching** — auto-detects your lens from EXIF, with a searchable manual picker and a
-  remembered choice per lens.
+- **Smart matching** — auto-detects your lens from EXIF, or your camera for fixed-lens bodies
+  (X100, GFX100RF, RX100, …), with a searchable manual picker and a remembered choice per lens
+  or body.
 
 All processing runs on the GPU as part of Safelight's develop pipeline, so corrections are
 non-destructive and update live.

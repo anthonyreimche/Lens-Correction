@@ -7,7 +7,8 @@
 import type { SafelightAPI, ExifData, CatalogPhoto } from "./types/safelight";
 import type { ResolvedProfile } from "./db/types";
 import { loadLensDb, getCachedLensDb, findLensById } from "./db/loader";
-import { resolveForPhoto, resolveForLens, matchLens } from "./db/matcher";
+import { resolveForPhoto, resolveForLens, matchLens, rememberKey } from "./db/matcher";
+import { lensDisplayName } from "./db/makers";
 import { resolveEmbedded } from "./features/embedded";
 import { resolveLcp } from "./features/lcp";
 import { importLcpFile } from "./features/parse-lcp";
@@ -133,7 +134,7 @@ async function resolveProfile(
     if (lens) return resolveForLens(lens, exif);
   }
 
-  // A choice remembered for this lens model (from a previous manual pick) is
+  // A choice remembered for this lens or body (from a previous manual pick) is
   // treated like an explicit pick, unless the user pinned a non-Lensfun source.
   if (state.pref === "auto" || state.pref === "lensfun") {
     const remembered = rememberedLensIdFor(exif);
@@ -211,7 +212,7 @@ export async function recompute(): Promise<void> {
   let detectedName = profile?.lensName ?? null;
   if (!detectedName && db) {
     const m = state.lensId ? findLensById(state.lensId) : matchLens(exif, db);
-    if (m) detectedName = `${m.maker} ${m.model}`;
+    if (m) detectedName = lensDisplayName(m);
   }
 
   uiStore.setState({
@@ -236,29 +237,28 @@ export function updateState(patch: Partial<LensState>, commitLabel?: string): vo
 }
 
 /** Pick a specific Lensfun lens (manual picker). Switches to profile mode and
- *  remembers the choice for this lens model via settings. */
+ *  remembers the choice for this lens or body via settings. */
 export function pickLens(lensId: string, lensName: string): void {
   rememberLens(lensName, lensId);
   updateState({ mode: "profile", lensId, pref: "lensfun" }, "Select Lens");
 }
 
-// Remember a manual lens choice keyed by the EXIF lens string, so the next photo
-// from the same lens auto-selects it.
+// Remember a manual lens choice under the photo's rememberKey (its body for a
+// built-in lens, else its EXIF lens string), so the next photo auto-selects it.
 function rememberLens(_lensName: string, lensId: string): void {
-  const photo = currentPhoto();
-  const exifLens = photo?.exif?.lens;
-  if (!exifLens) return;
+  const key = rememberKey(currentPhoto()?.exif ?? {}, getCachedLensDb() ?? []);
+  if (!key) return;
   const map = api.settings.get<Record<string, string>>("rememberedLenses", {});
-  api.settings.set("rememberedLenses", { ...map, [exifLens]: lensId });
+  api.settings.set("rememberedLenses", { ...map, [key]: lensId });
 }
 
-/** Apply a remembered manual choice if one exists for this photo's EXIF lens and
- *  the state hasn't already pinned a lens. Called after a photo loads. */
+/** Apply a remembered manual choice if one exists for this photo's body or EXIF
+ *  lens and the state hasn't already pinned a lens. Called after a photo loads. */
 export function rememberedLensIdFor(exif: ExifData): string | null {
-  const lens = exif.lens;
-  if (!lens) return null;
+  const key = rememberKey(exif, getCachedLensDb() ?? []);
+  if (!key) return null;
   const map = api.settings.get<Record<string, string>>("rememberedLenses", {});
-  return map[lens] ?? null;
+  return map[key] ?? null;
 }
 
 /** Estimate lateral CA from the current frame and apply it. */
