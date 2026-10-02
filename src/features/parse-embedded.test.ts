@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CatalogPhoto, SafelightAPI } from "../types/safelight";
-import type { ResolvedProfile } from "../db/types";
 import { embeddedCatalogHook } from "./parse-embedded";
+import { fromEmbeddedCache, toEmbeddedCache } from "./embedded";
 import { RAF_META_BYTES } from "./parse-raf";
 import { GFX100RF_META_RAF_BASE64 } from "./__fixtures__/gfx100rf-meta";
 
@@ -82,7 +82,8 @@ describe("embeddedCatalogHook — Fujifilm RAF", () => {
     const [store, key, value] = storage.idbSet.mock.calls[0];
     expect(store).toBe("embedded");
     expect(key).toBe("gfx");
-    const profile = value as ResolvedProfile;
+    const profile = fromEmbeddedCache(value)!;
+    expect(value).toEqual(toEmbeddedCache(profile));
     expect(profile.source).toBe("embedded");
     expect(profile.lensId).toBe("embedded:raf:FUJIFILM:GFX100RF");
     expect(profile.distortion?.model).toBe("poly5");
@@ -144,13 +145,17 @@ describe("embeddedCatalogHook — DNG", () => {
 
     await embeddedCatalogHook(apiWith(true)).onPhotoImport!({ photo, dir, fileName: "L1000001.DNG" });
 
-    expect(storage.idbSet).toHaveBeenCalledWith("embedded", "dng", {
-      lensId: "embedded:Leica:Summilux 28",
-      lensName: "Summilux 28",
-      source: "embedded",
-      distortion: null,
-      tca: null,
-      vignetting: { k: [-0.2, 0.05, 0.01] },
-    });
+    expect(storage.idbSet).toHaveBeenCalledWith(
+      "embedded",
+      "dng",
+      toEmbeddedCache({
+        lensId: "embedded:Leica:Summilux 28",
+        lensName: "Summilux 28",
+        source: "embedded",
+        distortion: null,
+        tca: null,
+        vignetting: { k: [-0.2, 0.05, 0.01] },
+      }),
+    );
   });
 });

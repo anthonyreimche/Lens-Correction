@@ -11,6 +11,8 @@ import {
   type RafTables,
 } from "./parse-raf";
 import { GFX100RF_META_RAF_BASE64 } from "./__fixtures__/gfx100rf-meta";
+import type { ResolvedProfile } from "../db/types";
+import { distortionScale, distortionUniforms } from "../distortion";
 
 function fixtureBytes(): ArrayBuffer {
   return Uint8Array.from(atob(GFX100RF_META_RAF_BASE64), (c) => c.charCodeAt(0)).buffer;
@@ -30,7 +32,7 @@ const CA_A = [7, 5, 5, 6, 6, 4, 0, -3, -3].map((n) => n / 65536);
 const CA_B = [5, 6, 6, 6, 8, 10, 13, 19, 19].map((n) => n / 65536);
 
 // Shader mirrors (stages.ts), in half-diagonal-normalised radius r.
-const poly5Scale = (k: number[], r: number) => 1 + k[1] * r * r + k[0] * r ** 4;
+const stageScale = (p: ResolvedProfile, r: number) => distortionScale(distortionUniforms(p, 0), r);
 const vignetteGain = (k: number[], r: number) => 1 + k[0] * r ** 2 + k[1] * r ** 4 + k[2] * r ** 6;
 const poly3Scale = (b: number, c: number, v: number, r: number) => b * r * r + c * r + v;
 
@@ -232,13 +234,14 @@ const caTable = (channelA: number[], channelB: number[]): RafCaTable => ({
 const NONE: RafTables = { distortion: null, vignetting: null, ca: null };
 
 describe("rafToResolved", () => {
-  it("maps distortion percent onto poly5 as [r⁴, r²] so the stage samples r·(1 + p/100)", () => {
-    const p = R.map((r) => 100 * (-0.05 * r * r + 0.01 * r ** 4));
-    const d = rafToResolved({ ...NONE, distortion: radial(p) }, GFX)!.distortion!;
+  it("maps distortion percent onto poly5 as [r², r⁴] so the stage samples r·(1 + p/100)", () => {
+    const pct = (r: number) => 100 * (-0.05 * r * r + 0.01 * r ** 4);
+    const resolved = rafToResolved({ ...NONE, distortion: radial(R.map(pct)) }, GFX)!;
+    const d = resolved.distortion!;
     expect(d.model).toBe("poly5");
-    expect(d.k[0]).toBeCloseTo(0.01, 10);
-    expect(d.k[1]).toBeCloseTo(-0.05, 10);
-    R.forEach((r, i) => expect(poly5Scale(d.k, r)).toBeCloseTo(1 + p[i] / 100, 10));
+    expect(d.k[0]).toBeCloseTo(-0.05, 10);
+    expect(d.k[1]).toBeCloseTo(0.01, 10);
+    for (const r of [0.5, 1, ...R]) expect(stageScale(resolved, r)).toBeCloseTo(1 + pct(r) / 100, 10);
   });
 
   it("maps vignetting percent-of-centre onto the attenuation the stage divides by", () => {
@@ -271,7 +274,7 @@ describe("rafToResolved", () => {
     const p = R.map((r) => 100 * (-0.05 * r * r + 0.01 * r ** 4));
     p[8] += 1;
     const d = rafToResolved({ ...NONE, distortion: radial(p) }, GFX)!.distortion!;
-    expect(Math.abs(d.k[1] + 0.05)).toBeGreaterThan(1e-4);
+    expect(Math.abs(d.k[0] + 0.05)).toBeGreaterThan(1e-4);
   });
 
   it("maps a CA-free table to the identity scale", () => {
@@ -316,9 +319,8 @@ describe("GFX100RF fit residuals", () => {
   const maxAbs = (xs: number[]) => Math.max(...xs.map(Math.abs));
 
   it("distortion: barrel, within 6.5 px of every stored point at full resolution", () => {
-    const k = profile.distortion!.k;
-    expect(poly5Scale(k, 1)).toBeLessThan(1);
-    const px = RADII.map((r, i) => (poly5Scale(k, r) - (1 + DISTORTION[i] / 100)) * r * radiusPx);
+    expect(stageScale(profile, 1)).toBeLessThan(1);
+    const px = RADII.map((r, i) => (stageScale(profile, r) - (1 + DISTORTION[i] / 100)) * r * radiusPx);
     expect(maxAbs(px)).toBeLessThan(6.5);
   });
 

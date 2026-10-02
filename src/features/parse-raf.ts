@@ -182,13 +182,13 @@ function trimClampedTail(radii: number[], values: number[], keep: number) {
 
 // Assumed semantics: an output pixel at radius r samples the source at
 // r·(1 + p(r)/100), so negative p is barrel. The poly5 stage samples at
-// r·(1 + KB·r² + KA·r⁴), bound as k = [KA, KB].
+// r·(1 + k1·r² + k2·r⁴), with k = [k1, k2].
 const DISTORTION_POWERS = [2, 4];
 
 function fitDistortion(t: RafRadialTable): ResolvedDistortion | null {
   const pts = trimClampedTail(t.radii, t.values, DISTORTION_POWERS.length);
   const c = fitPowers(pts.radii, pts.values.map((p) => p / 100), DISTORTION_POWERS);
-  return c && { model: "poly5", k: [c[1], c[0]] };
+  return c && { model: "poly5", k: c };
 }
 
 // Assumed semantics: v(r) is the brightness in percent of the centre's, i.e.

@@ -18,6 +18,7 @@ import { EXT_ID } from "../params";
 import type { AdobeProfile } from "./adobe-model";
 import { adobeToResolved } from "./adobe-model";
 import { idbSet, idbHas } from "../storage";
+import { toEmbeddedCache } from "./embedded";
 import { ifdEntries, nextIfd, readTiffHeader } from "./tiff";
 import {
   RAF_HEADER_BYTES,
@@ -217,7 +218,7 @@ export function embeddedCatalogHook(api: SafelightAPI): CatalogHooksContribution
       const resolved = raf
         ? await readRafProfile(ctx.dir, ctx.fileName, ctx.photo)
         : await readDngProfile(ctx.dir, ctx.fileName, ctx.photo);
-      if (resolved) await idbSet("embedded", ctx.photo.id, resolved);
+      if (resolved) await idbSet("embedded", ctx.photo.id, toEmbeddedCache(resolved));
     },
   };
 }

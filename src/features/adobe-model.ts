@@ -54,10 +54,7 @@ function convertDistortion(
 ): ResolvedDistortion | null {
   if (!d) return null;
   // scale(r) = 1 + k1·(S·r)² + k2·(S·r)⁴ (drop k3·r⁶ — poly5 holds two terms).
-  const a = d.k1 * s * s; // r² coefficient
-  const b = d.k2 * s * s * s * s; // r⁴ coefficient
-  // poly5 shader is `1 + DistB·r² + DistA·r⁴`, bound as DistA=k[0], DistB=k[1].
-  return { model: "poly5", k: [b, a] };
+  return { model: "poly5", k: [d.k1 * s * s, d.k2 * s * s * s * s] };
 }
 
 function convertVignette(

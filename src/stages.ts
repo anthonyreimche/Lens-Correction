@@ -16,6 +16,8 @@ import type { ProcessingStageContribution } from "./types/safelight";
 import { STAGE } from "./params";
 
 // ─── Distortion + auto-crop (geometry) ──────────────────────────────────────
+// Bound by distortionUniforms() and mirrored on the CPU by distortionScale()
+// (distortion.ts), which auto-crop evaluates; the two must stay in step.
 
 export const distortionStage: ProcessingStageContribution = {
   id: STAGE.distortion,
@@ -26,6 +28,7 @@ export const distortionStage: ProcessingStageContribution = {
     { key: "distKA", glslType: "float", default: 0 },
     { key: "distKB", glslType: "float", default: 0 },
     { key: "distKC", glslType: "float", default: 0 },
+    { key: "distRScale", glslType: "float", default: 1 },
     { key: "distManual", glslType: "float", default: 0 },
     { key: "cropScale", glslType: "float", default: 1 },
   ],
@@ -35,23 +38,21 @@ export const distortionStage: ProcessingStageContribution = {
     float halfDiag = 0.5 * sqrt(uImageAspect * uImageAspect + 1.0);
     float rr = length(phys) / halfDiag;
     float rr2 = rr * rr;
+    float rp = rr * distRScale;
+    float rp2 = rp * rp;
     float scl = 1.0;
     if (distModel == 1) {
-      scl = 1.0 - distKB + distKB * rr2;
+      scl = 1.0 - distKA + distKA * rp2;
     } else if (distModel == 2) {
-      scl = 1.0 + distKB * rr2 + distKA * rr2 * rr2;
+      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2;
     } else if (distModel == 3) {
-      scl = distKA * rr2 * rr + distKB * rr2 + distKC * rr
+      scl = distKA * rp2 * rp + distKB * rp2 + distKC * rp
           + (1.0 - distKA - distKB - distKC);
     }
     if (abs(distManual) > 0.001) {
       scl += distManual * 0.0003 * rr2;
     }
-    vec2 res = 0.5 + cen * scl;
-    if (cropScale > 1.001) {
-      res = 0.5 + (res - 0.5) / cropScale;
-    }
-    srcUv = res;
+    srcUv = 0.5 + cen * (scl / cropScale);
   `,
 };
 
@@ -79,6 +80,7 @@ export const caStage: ProcessingStageContribution = {
         { key: "tcaCR", glslType: "float", default: 0 },
         { key: "tcaBB", glslType: "float", default: 0 },
         { key: "tcaCB", glslType: "float", default: 0 },
+        { key: "tcaRScale", glslType: "float", default: 1 },
         { key: "caManual", glslType: "float", default: 0 },
         { key: "caAspect", glslType: "float", default: 1.5 },
       ],
@@ -94,8 +96,9 @@ export const caStage: ProcessingStageContribution = {
           sclR = tcaKR;
           sclB = tcaKB;
         } else if (tcaModel == 2) {
-          sclR = tcaBR * rr2 + tcaCR * rr + tcaKR;
-          sclB = tcaBB * rr2 + tcaCB * rr + tcaKB;
+          float rt = rr * tcaRScale;
+          sclR = tcaBR * rt * rt + tcaCR * rt + tcaKR;
+          sclB = tcaBB * rt * rt + tcaCB * rt + tcaKB;
         }
         if (caManual > 0.001) {
           float ofs = caManual / 100.0 * 0.008 * rr2 * 4.0;

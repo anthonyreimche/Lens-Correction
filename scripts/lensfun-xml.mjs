@@ -104,6 +104,7 @@ function parseLensBlock(block) {
 
   const cropStr = extractText(block, "cropfactor");
   const cropFactor = cropStr ? parseFloat(cropStr) : 1;
+  const aspectRatio = parseAspectRatio(extractText(block, "aspect-ratio"));
   const typeStr = extractText(block, "type") || "rectilinear";
 
   // Focal range from <focal> element or inferred from calibration
@@ -175,6 +176,7 @@ function parseLensBlock(block) {
     model,
     mounts,
     cropFactor,
+    ...(aspectRatio === null ? {} : { aspectRatio }),
     type: typeStr,
     focalMin,
     focalMax,
@@ -184,6 +186,17 @@ function parseLensBlock(block) {
     tca,
     vignetting,
   };
+}
+
+// Lensfun writes the calibration frame's aspect as "4:3" or as a decimal. It is
+// kept as long/short, so a portrait spelling reads the same.
+function parseAspectRatio(text) {
+  if (!text) return null;
+  const parts = text.split(":").map(Number);
+  if (parts.length > 2) return null;
+  const value = parts.length === 2 ? parts[0] / parts[1] : parts[0];
+  if (!(value > 0) || !isFinite(value)) return null;
+  return Math.max(value, 1 / value);
 }
 
 function parseDistortion(attrs) {

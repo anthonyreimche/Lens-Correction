@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseOpcodeList, findOpcodeList3 } from "./parse-embedded";
 import { adobeToResolved, type AdobeProfile } from "./adobe-model";
+import type { ResolvedProfile } from "../db/types";
+import { distortionScale, distortionUniforms } from "../distortion";
 
 // Build a big-endian OpcodeList3 blob with a WarpRectilinear + FixVignetteRadial.
 function buildBlob(): ArrayBuffer {
@@ -99,8 +101,7 @@ describe("adobeToResolved", () => {
     const r = adobeToResolved(profile, 50, 1.5, "embedded");
     expect(r).not.toBeNull();
     expect(r!.source).toBe("embedded");
-    // poly5 stored as [r⁴coeff, r²coeff] = [k2, k1] when S = 1.
-    expect(r!.distortion).toEqual({ model: "poly5", k: [0.02, -0.1] });
+    expect(r!.distortion).toEqual({ model: "poly5", k: [-0.1, 0.02] });
     expect(r!.vignetting!.k).toEqual([-0.2, 0.05, 0]);
     expect(r!.tca!.model).toBe("poly3");
     // [br, cr, vr, bb, cb, vb]
@@ -115,7 +116,16 @@ describe("adobeToResolved", () => {
     const r = adobeToResolved(lcp, 50, 1.5, "lcp");
     // S = 0.5*sqrt(1 + 1/1.5²)/1.4 ≈ 0.4289; r² coeff = k1*S².
     const S = (0.5 * Math.sqrt(1 + 1 / (1.5 * 1.5))) / 1.4;
-    expect(r!.distortion!.k[1]).toBeCloseTo(-0.1 * S * S, 6);
-    expect(r!.distortion!.k[0]).toBeCloseTo(0.02 * S * S * S * S, 8);
+    expect(r!.distortion!.k[0]).toBeCloseTo(-0.1 * S * S, 6);
+    expect(r!.distortion!.k[1]).toBeCloseTo(0.02 * S * S * S * S, 8);
+  });
+
+  it.each([0.5, 1])("has the stage scale by 1 + k1·(S·r)² + k2·(S·r)⁴ at r = %f", (r) => {
+    const stageScale = (p: ResolvedProfile) => distortionScale(distortionUniforms(p, 0), r);
+    expect(stageScale(adobeToResolved(profile, 50, 1.5, "embedded")!)).toBeCloseTo(1 - 0.1 * r ** 2 + 0.02 * r ** 4, 12);
+
+    const lcp: AdobeProfile = { ...profile, entries: [{ ...profile.entries[0], focalLengthX: 1.4 }] };
+    const sr = ((0.5 * Math.sqrt(1 + 1 / (1.5 * 1.5))) / 1.4) * r;
+    expect(stageScale(adobeToResolved(lcp, 50, 1.5, "lcp")!)).toBeCloseTo(1 - 0.1 * sr ** 2 + 0.02 * sr ** 4, 12);
   });
 });

@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import type { LensfunLens } from "../src/db/types";
+import { resolveForLens } from "../src/db/matcher";
+import { distortionScale, distortionUniforms } from "../src/distortion";
 import { buildLensDatabase } from "./lensfun-xml.mjs";
 
 const doc = (...blocks: string[]): string =>
@@ -258,6 +260,73 @@ describe("buildLensDatabase — ids and duplicates", () => {
   });
 });
 
+describe("buildLensDatabase — calibration aspect ratio", () => {
+  const withAspect = (aspect: string): string => `
+    <lens>
+        <maker>Olympus</maker>
+        <model>Zuiko Digital 14-42mm f/3.5-5.6</model>
+        <mount>4/3 System</mount>
+        <cropfactor>2</cropfactor>
+        <aspect-ratio>${aspect}</aspect-ratio>
+        <calibration>
+            <distortion model="poly3" focal="14" k1="-0.0123"/>
+        </calibration>
+    </lens>`;
+
+  it.each([
+    ["4:3", 4 / 3],
+    ["3:2", 1.5],
+    ["16:9", 16 / 9],
+    ["8:7", 8 / 7],
+    ["1:1", 1],
+    ["1.5", 1.5],
+    [" 4:3 ", 4 / 3],
+  ])("reads %s as long/short %f", (aspect, expected) => {
+    const { lenses } = build(doc(withAspect(aspect)));
+    expect(lenses[0].aspectRatio).toBeCloseTo(expected, 12);
+  });
+
+  it.each([
+    ["2:3", 1.5],
+    ["0.75", 4 / 3],
+  ])("normalises the portrait form %s to long/short", (aspect, expected) => {
+    const { lenses } = build(doc(withAspect(aspect)));
+    expect(lenses[0].aspectRatio).toBeCloseTo(expected, 12);
+  });
+
+  it.each([["abc"], ["4:0"], ["0"], ["-1.5"], ["4:3:2"]])("leaves an unreadable %s undeclared", (aspect) => {
+    const { lenses } = build(doc(withAspect(aspect)));
+    expect(lenses[0]).not.toHaveProperty("aspectRatio");
+  });
+
+  it("leaves a lens without the element undeclared, keeping the record small", () => {
+    const { lenses } = build(doc(GFX100RF_LENS));
+    expect(lenses[0]).not.toHaveProperty("aspectRatio");
+  });
+});
+
+describe("buildLensDatabase — poly5 distortion", () => {
+  const poly5 = `
+    <lens>
+        <maker>Canon</maker>
+        <model>Canon EF 35mm f/2</model>
+        <mount>Canon EF</mount>
+        <cropfactor>1</cropfactor>
+        <aspect-ratio>3:2</aspect-ratio>
+        <calibration>
+            <distortion model="poly5" focal="35" k1="-0.08" k2="0.02"/>
+        </calibration>
+    </lens>`;
+
+  it.each([0.5, 1])("reaches the stage as 1 + k1·r² + k2·r⁴ in Lensfun's radius (shader r = %f)", (r) => {
+    const { lenses } = build(doc(poly5));
+    expect(lenses[0].distortion[0].k).toEqual([-0.08, 0.02]);
+    const profile = resolveForLens(lenses[0], { focalLength: 35, focalLength35mm: 35 }, 1.5);
+    const rl = r * Math.hypot(1.5, 1);
+    expect(distortionScale(distortionUniforms(profile, 0), r)).toBeCloseTo(1 - 0.08 * rl ** 2 + 0.02 * rl ** 4, 12);
+  });
+});
+
 describe("vendored Lensfun database", () => {
   const dir = fileURLToPath(new URL("../vendor/lensfun-db/", import.meta.url));
   const documents = readdirSync(dir)
@@ -284,5 +353,13 @@ describe("vendored Lensfun database", () => {
 
   it("keeps no 'fixed lens' placeholder names", () => {
     expect(lenses.filter((l) => /fixed lens/i.test(l.model)).map((l) => l.id)).toEqual([]);
+  });
+
+  it("carries the declared calibration aspect ratio, and only where declared", () => {
+    expect(byModel(lenses, "FinePix F11 & compatibles (Standard)").aspectRatio).toBeCloseTo(4 / 3, 12);
+    expect(byModel(lenses, "GFX100RF & compatibles (Standard)")).not.toHaveProperty("aspectRatio");
+    const declared = lenses.filter((l) => l.aspectRatio !== undefined);
+    expect(declared.length).toBeGreaterThan(300);
+    expect(declared.every((l) => l.aspectRatio! >= 1)).toBe(true);
   });
 });

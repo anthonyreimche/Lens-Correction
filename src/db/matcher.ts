@@ -5,6 +5,7 @@
 import type { ExifData } from "../types/safelight";
 import type { LensfunLens, ResolvedProfile } from "./types";
 import { resolveProfile } from "./interpolate";
+import { huginRadiusScale } from "./radius-scale";
 import { canonicalMaker, compact } from "./makers";
 
 interface MatchResult {
@@ -102,23 +103,29 @@ function matchByLensName(exif: ExifData, db: LensfunLens[]): LensfunLens | null 
   return best && best.score >= 0.6 ? best.lens : null;
 }
 
-/** Resolve a full profile for a photo from its EXIF + the database. */
+/** Resolve a full profile for a photo from its EXIF + the database. `aspect` is
+ *  the photo's width/height. */
 export function resolveForPhoto(
   exif: ExifData,
   db: LensfunLens[],
+  aspect: number,
 ): { lens: LensfunLens; profile: ResolvedProfile } | null {
   const lens = matchLens(exif, db);
   if (!lens) return null;
-  return { lens, profile: resolveForLens(lens, exif) };
+  return { lens, profile: resolveForLens(lens, exif, aspect) };
 }
 
 /** Resolve a profile for an explicitly chosen lens (manual picker / remembered
- *  choice), interpolated to this shot's focal/aperture/distance. */
-export function resolveForLens(lens: LensfunLens, exif: ExifData): ResolvedProfile {
+ *  choice), interpolated to this shot's focal/aperture/distance and scaled to
+ *  its frame (`aspect` is the photo's width/height). */
+export function resolveForLens(lens: LensfunLens, exif: ExifData, aspect: number): ResolvedProfile {
   const focal = exif.focalLength ?? lens.focalMin;
   const aperture = exif.aperture ?? lens.apertureMin;
   const distance = exif.subjectDistance ?? 1000;
-  return resolveProfile(lens, focal, aperture, distance);
+  return {
+    ...resolveProfile(lens, focal, aperture, distance),
+    radiusScale: huginRadiusScale(lens, { aspect, focalLength: exif.focalLength, focalLength35mm: exif.focalLength35mm }),
+  };
 }
 
 /** The key a manual lens pick is remembered under. A body with a built-in lens

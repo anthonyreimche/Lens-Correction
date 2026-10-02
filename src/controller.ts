@@ -131,7 +131,7 @@ async function resolveProfile(
   // Explicit manual override wins.
   if (state.lensId) {
     const lens = findLensById(state.lensId);
-    if (lens) return resolveForLens(lens, exif);
+    if (lens) return resolveForLens(lens, exif, aspect);
   }
 
   // A choice remembered for this lens or body (from a previous manual pick) is
@@ -140,7 +140,7 @@ async function resolveProfile(
     const remembered = rememberedLensIdFor(exif);
     if (remembered) {
       const lens = findLensById(remembered);
-      if (lens) return resolveForLens(lens, exif);
+      if (lens) return resolveForLens(lens, exif, aspect);
     }
   }
 
@@ -162,7 +162,7 @@ async function resolveProfile(
       const l = await resolveLcp(api, exif, aspect);
       if (l) return l;
     } else if (src === "lensfun") {
-      const res = resolveForPhoto(exif, db);
+      const res = resolveForPhoto(exif, db, aspect);
       if (res) return res.profile;
     }
   }
@@ -181,7 +181,7 @@ export async function recompute(): Promise<void> {
   const aspect = photoAspect(photo);
 
   // Resolve (cached by the inputs that affect resolution).
-  const key = `${photoId}|${state.mode}|${state.pref}|${state.lensId}`;
+  const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}`;
   let profile: ResolvedProfile | null;
   if (key === cacheKey) {
     profile = cacheProfile;

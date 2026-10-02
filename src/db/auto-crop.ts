@@ -1,57 +1,23 @@
 // Lens Correction for Safelight — MIT licensed (see LICENSE).
-// Compute the zoom factor needed to crop out invalid edge pixels after
-// distortion correction. The returned value (>= 1.0) drives the geometry
-// stage's autoCropScale uniform.
+// The zoom that keeps distortion correction from sampling outside the source.
+// The distortion stage samples the source at 0.5 + cen·scl / cropScale, so an
+// output point on the frame's edge falls outside the source exactly where
+// scl > 1 there. The crop is the largest scl along the edge, found with the
+// stage's own scale function and uniforms; barrel correction (scl < 1 at the
+// edge) needs none.
 
-import type { DistortionModel } from "./types";
+import { distortionScale, shaderRadius, type DistortionUniforms } from "../distortion";
 
-export function computeAutoCropScale(
-  model: DistortionModel,
-  coeffs: number[],
-  manualDistortion: number,
-  aspect: number,
-): number {
-  const halfH = 1.0;
-  const halfW = aspect;
-  const testPoints = [
-    [-halfW, -halfH], [halfW, -halfH], [-halfW, halfH], [halfW, halfH],
-    [0, -halfH], [0, halfH], [-halfW, 0], [halfW, 0],
-  ];
+// Dense enough to catch a profile whose peak lies between a corner and an edge
+// midpoint, to well under a pixel.
+const SAMPLES_PER_EDGE = 1024;
 
-  // Normalize so the diagonal = 1.0 (Lensfun convention)
-  const diag = Math.sqrt(halfW * halfW + halfH * halfH);
-
-  let maxInwardRatio = 1.0;
-
-  for (const [x, y] of testPoints) {
-    const nx = x / diag;
-    const ny = y / diag;
-    const r = Math.sqrt(nx * nx + ny * ny);
-    if (r < 1e-6) continue;
-
-    const distortedR = applyDistortion(model, coeffs, r) + manualDistortion * 0.0003 * r * r * r;
-    const ratio = distortedR / r;
-
-    if (ratio < maxInwardRatio) maxInwardRatio = ratio;
+export function computeAutoCropScale(u: DistortionUniforms, aspect: number): number {
+  const edgeScale = (cx: number, cy: number) => distortionScale(u, shaderRadius(cx, cy, aspect));
+  let peak = 1;
+  for (let i = 0; i <= SAMPLES_PER_EDGE; i++) {
+    const t = -0.5 + i / SAMPLES_PER_EDGE;
+    peak = Math.max(peak, edgeScale(t, -0.5), edgeScale(t, 0.5), edgeScale(-0.5, t), edgeScale(0.5, t));
   }
-
-  return maxInwardRatio > 0.01 ? 1.0 / maxInwardRatio : 1.0;
-}
-
-function applyDistortion(model: DistortionModel, k: number[], r: number): number {
-  const r2 = r * r;
-  switch (model) {
-    case "poly3":
-      return r * (1.0 - (k[0] ?? 0) + (k[0] ?? 0) * r2);
-    case "poly5":
-      return r * (1.0 + (k[0] ?? 0) * r2 + (k[1] ?? 0) * r2 * r2);
-    case "ptlens": {
-      const a = k[0] ?? 0;
-      const b = k[1] ?? 0;
-      const c = k[2] ?? 0;
-      return r * (a * r2 * r + b * r2 + c * r + 1.0 - a - b - c);
-    }
-    default:
-      return r;
-  }
+  return peak;
 }

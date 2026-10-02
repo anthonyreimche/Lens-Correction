@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { matchLens, rememberKey, resolveForPhoto, resolveForLens } from "./matcher";
 import { resolveProfile } from "./interpolate";
-import { computeAutoCropScale } from "./auto-crop";
 import type { LensfunCamera, LensfunLens } from "./types";
 
 const lens = (over: Partial<LensfunLens> = {}): LensfunLens => ({
@@ -224,7 +223,7 @@ describe("resolveForPhoto on fixed-lens bodies", () => {
       distortion: [{ focal: 35, model: "ptlens", k: [0.0123, -0.0708, 0.0267] }],
     });
     const exif = { cameraMake: "FUJIFILM", cameraModel: "GFX100RF", focalLength: 35, aperture: 4 };
-    const res = resolveForPhoto(exif, [lens(), gfx]);
+    const res = resolveForPhoto(exif, [lens(), gfx], 4 / 3);
     expect(res?.lens.id).toBe("gfx100rf");
     expect(res?.profile.cropFactor).toBe(0.8);
     expect(res?.profile.distortion).toEqual({ model: "ptlens", k: [0.0123, -0.0708, 0.0267] });
@@ -239,13 +238,13 @@ describe("resolveForPhoto on fixed-lens bodies", () => {
         { focal: 36.8, model: "poly3", k: [-0.01] },
       ],
     });
-    const res = resolveForPhoto({ cameraMake: "Canon", cameraModel: "Canon PowerShot G7 X" }, [zoom]);
+    const res = resolveForPhoto({ cameraMake: "Canon", cameraModel: "Canon PowerShot G7 X" }, [zoom], 1.5);
     expect(res?.profile.distortion?.k[0]).toBe(0.05);
   });
 
   it("names the profile after the body's maker", () => {
     const rx1r = fixedLens("rx1r", "DSC-RX1R & compatibles", [{ maker: "Sony", model: "DSC-RX1R" }], { maker: "Carl Zeiss" });
-    const res = resolveForPhoto({ cameraMake: "SONY", cameraModel: "DSC-RX1R" }, [rx1r]);
+    const res = resolveForPhoto({ cameraMake: "SONY", cameraModel: "DSC-RX1R" }, [rx1r], 1.5);
     expect(res?.profile.lensName).toBe("Sony DSC-RX1R & compatibles");
   });
 });
@@ -253,7 +252,7 @@ describe("resolveForPhoto on fixed-lens bodies", () => {
 describe("resolveForLens", () => {
   it("names the profile with the canonical lens maker", () => {
     const summicron = lens({ maker: "LEICA CAMERA AG", model: "Summicron-M 1:2/28 Asph.", focalMin: 28, focalMax: 28 });
-    expect(resolveForLens(summicron, {}).lensName).toBe("Leica Summicron-M 1:2/28 Asph.");
+    expect(resolveForLens(summicron, {}, 1.5).lensName).toBe("Leica Summicron-M 1:2/28 Asph.");
   });
 });
 
@@ -314,19 +313,8 @@ describe("resolveProfile", () => {
   it("resolveForPhoto and resolveForLens agree on the matched lens", () => {
     const db = [lens()];
     const exif = { lens: "EF 50mm f/1.8 STM", focalLength: 50, aperture: 1.8 };
-    const viaPhoto = resolveForPhoto(exif, db)?.profile.distortion?.k[0];
-    const viaLens = resolveForLens(lens(), exif).distortion?.k[0];
+    const viaPhoto = resolveForPhoto(exif, db, 1.5)?.profile.distortion?.k[0];
+    const viaLens = resolveForLens(lens(), exif, 1.5).distortion?.k[0];
     expect(viaPhoto).toBe(viaLens);
-  });
-});
-
-describe("computeAutoCropScale", () => {
-  it("returns >= 1 (zoom never shrinks the frame)", () => {
-    const s = computeAutoCropScale("poly3", [0.05], 0, 1.5);
-    expect(s).toBeGreaterThanOrEqual(1);
-  });
-
-  it("is ~1 for a near-zero distortion", () => {
-    expect(computeAutoCropScale("poly3", [0.0], 0, 1.5)).toBeCloseTo(1, 2);
   });
 });

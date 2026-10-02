@@ -6,6 +6,7 @@
 
 import type { ResolvedProfile } from "./db/types";
 import { computeAutoCropScale } from "./db/auto-crop";
+import { distortionUniforms } from "./distortion";
 
 export const EXT_ID = "com.safelight.lens-correction";
 
@@ -135,28 +136,15 @@ export function computeStageUniforms(
   const useProfile = mode === "profile" && profile !== null;
 
   // ── Distortion (geometry) ──
-  set(STAGE.distortion, "distManual", mode !== "off" ? state.distortion : 0);
-  if (useProfile && profile!.distortion && state.distortionEnabled) {
-    const d = profile!.distortion;
-    set(STAGE.distortion, "distModel", d.model === "poly3" ? 1 : d.model === "poly5" ? 2 : 3);
-    set(STAGE.distortion, "distKA", d.k[0] ?? 0);
-    set(STAGE.distortion, "distKB", d.k.length > 1 ? d.k[1] : d.k[0] ?? 0);
-    set(STAGE.distortion, "distKC", d.k[2] ?? 0);
-  } else {
-    set(STAGE.distortion, "distModel", 0);
-    set(STAGE.distortion, "distKA", 0);
-    set(STAGE.distortion, "distKB", 0);
-    set(STAGE.distortion, "distKC", 0);
-  }
+  const dist = distortionUniforms(
+    useProfile && state.distortionEnabled ? profile : null,
+    mode !== "off" ? state.distortion : 0,
+  );
+  for (const [key, value] of Object.entries(dist)) set(STAGE.distortion, key, value);
   // Auto-crop: profile mode with profile distortion only (manual mode: user owns it).
   let cropScale = 1;
   if (state.autoCrop && useProfile && profile!.distortion && state.distortionEnabled) {
-    cropScale = computeAutoCropScale(
-      profile!.distortion.model,
-      profile!.distortion.k,
-      state.distortion,
-      aspect,
-    );
+    cropScale = computeAutoCropScale(dist, aspect);
   }
   set(STAGE.distortion, "cropScale", cropScale);
 
@@ -165,6 +153,7 @@ export function computeStageUniforms(
   set(STAGE.ca, "caAspect", aspect);
   if (useProfile && profile!.tca && state.caEnabled) {
     const t = profile!.tca;
+    set(STAGE.ca, "tcaRScale", profile!.radiusScale ?? 1);
     if (t.model === "linear") {
       set(STAGE.ca, "tcaModel", 1);
       set(STAGE.ca, "tcaKR", t.k[0] ?? 1);
@@ -191,6 +180,7 @@ export function computeStageUniforms(
     set(STAGE.ca, "tcaCR", 0);
     set(STAGE.ca, "tcaBB", 0);
     set(STAGE.ca, "tcaCB", 0);
+    set(STAGE.ca, "tcaRScale", 1);
   }
   // Auto CA (estimated from the image) overrides the profile CA when enabled:
   // a global per-channel radial scale (the linear TCA model).
@@ -202,6 +192,7 @@ export function computeStageUniforms(
     set(STAGE.ca, "tcaCR", 0);
     set(STAGE.ca, "tcaBB", 0);
     set(STAGE.ca, "tcaCB", 0);
+    set(STAGE.ca, "tcaRScale", 1);
   }
 
   // ── Vignetting (scene-linear) ──

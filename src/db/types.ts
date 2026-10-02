@@ -32,6 +32,9 @@ export interface LensfunLens {
   model: string;
   mounts: string[];
   cropFactor: number;
+  /** Long/short aspect of the frame the calibration was made on, when Lensfun
+   *  declares it. */
+  aspectRatio?: number;
   type: string;
   focalMin: number;
   focalMax: number;
@@ -54,7 +57,10 @@ export interface LensfunCamera {
 
 export interface ResolvedDistortion {
   model: DistortionModel;
-  /** poly3: [k1], poly5: [k1,k2], ptlens: [a,b,c] */
+  /** As Lensfun defines them — poly3: [k1] for 1 - k1 + k1·r²;
+   *  poly5: [k1, k2] for 1 + k1·r² + k2·r⁴; ptlens: [a, b, c] for
+   *  a·r³ + b·r² + c·r + 1 - a - b - c — each the factor an output point's
+   *  radius is scaled by to find its source sample. */
   k: number[];
 }
 
@@ -73,9 +79,11 @@ export interface ResolvedProfile {
   lensName: string;
   /** Where the coefficients came from — drives the panel's status line. */
   source: "lensfun" | "embedded" | "lcp" | "manual";
-  /** Sensor crop factor of the calibration, so the shader can rescale the
-   *  normalized radius when the shot's sensor differs (rare; usually equal). */
+  /** Sensor crop factor of the calibration. */
   cropFactor?: number;
+  /** Multiplies the stages' radius (1 at the half-diagonal) into the radius the
+   *  distortion and TCA coefficients are expressed in. Absent means 1. */
+  radiusScale?: number;
   distortion: ResolvedDistortion | null;
   tca: ResolvedTca | null;
   vignetting: ResolvedVignetting | null;
