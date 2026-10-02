@@ -97,9 +97,14 @@ describe("filterLenses", () => {
     expect(ids(filterLenses(db, "STM canon 50"))).toEqual(["ef50", "ef50-aps"]);
   });
 
-  it("lists the first 60 lenses for an empty query", () => {
-    const many = Array.from({ length: 80 }, (_, i) => lens(`l${i}`, "Canon", `Lens ${i}`));
-    expect(ids(filterLenses(many, "  "))).toEqual(ids(many.slice(0, 60)));
+  const many = Array.from({ length: 2000 }, (_, i) => lens(`l${i}`, "Canon", `Lens ${i}`));
+
+  it("lists every lens for an empty query", () => {
+    expect(ids(filterLenses(many, "  "))).toEqual(ids(many));
+  });
+
+  it("returns every match for a broad query", () => {
+    expect(filterLenses(many, "canon")).toHaveLength(2000);
   });
 });
 

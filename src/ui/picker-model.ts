@@ -17,15 +17,13 @@ export interface PickerGroup {
 }
 
 /** Lenses whose makers, model or bodies contain every word of the query. */
-export function filterLenses(db: LensfunLens[], query: string, limit = 60): LensfunLens[] {
+export function filterLenses(db: LensfunLens[], query: string): LensfunLens[] {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return db.slice(0, limit);
-  return db
-    .filter((lens) => {
-      const text = searchText(lens);
-      return tokens.every((token) => text.includes(token));
-    })
-    .slice(0, limit);
+  if (tokens.length === 0) return db;
+  return db.filter((lens) => {
+    const text = searchText(lens);
+    return tokens.every((token) => text.includes(token));
+  });
 }
 
 export function groupLenses(lenses: LensfunLens[]): PickerGroup[] {
