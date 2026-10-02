@@ -1,42 +1,62 @@
-//#region src/db/auto-crop.ts
-function computeAutoCropScale(model, coeffs, manualDistortion, aspect) {
-	const halfH = 1;
-	const halfW = aspect;
-	const testPoints = [
-		[-halfW, -1],
-		[halfW, -1],
-		[-halfW, halfH],
-		[halfW, halfH],
-		[0, -1],
-		[0, halfH],
-		[-halfW, 0],
-		[halfW, 0]
-	];
-	const diag = Math.sqrt(halfW * halfW + halfH * halfH);
-	let maxInwardRatio = 1;
-	for (const [x, y] of testPoints) {
-		const nx = x / diag;
-		const ny = y / diag;
-		const r = Math.sqrt(nx * nx + ny * ny);
-		if (r < 1e-6) continue;
-		const ratio = (applyDistortion(model, coeffs, r) + manualDistortion * 3e-4 * r * r * r) / r;
-		if (ratio < maxInwardRatio) maxInwardRatio = ratio;
-	}
-	return maxInwardRatio > .01 ? 1 / maxInwardRatio : 1;
+//#region src/distortion.ts
+const MODEL_ID = {
+	poly3: 1,
+	poly5: 2,
+	ptlens: 3
+};
+/** Bind `profile`'s distortion (null when profile distortion is off) and the
+*  manual slider. */
+function distortionUniforms(profile, manual) {
+	const d = profile?.distortion;
+	if (!d) return {
+		distModel: 0,
+		distKA: 0,
+		distKB: 0,
+		distKC: 0,
+		distRScale: 1,
+		distManual: manual
+	};
+	return {
+		distModel: MODEL_ID[d.model],
+		distKA: d.k[0] ?? 0,
+		distKB: d.k[1] ?? 0,
+		distKC: d.k[2] ?? 0,
+		distRScale: profile.radiusScale ?? 1,
+		distManual: manual
+	};
 }
-function applyDistortion(model, k, r) {
-	const r2 = r * r;
-	switch (model) {
-		case "poly3": return r * (1 - (k[0] ?? 0) + (k[0] ?? 0) * r2);
-		case "poly5": return r * (1 + (k[0] ?? 0) * r2 + (k[1] ?? 0) * r2 * r2);
-		case "ptlens": {
-			const a = k[0] ?? 0;
-			const b = k[1] ?? 0;
-			const c = k[2] ?? 0;
-			return r * (a * r2 * r + b * r2 + c * r + 1 - a - b - c);
-		}
-		default: return r;
+/** The shader's normalised radius: 1 at the frame's half-diagonal. `cx`, `cy`
+*  are the offset from the frame centre in UV units. */
+function shaderRadius(cx, cy, aspect) {
+	const px = cx * aspect;
+	const halfDiag = .5 * Math.sqrt(aspect * aspect + 1);
+	return Math.sqrt(px * px + cy * cy) / halfDiag;
+}
+/** The factor the stage scales an output point's offset from the centre by to
+*  find its source sample, at shader radius `rr`. */
+function distortionScale(u, rr) {
+	const rr2 = rr * rr;
+	const rp = rr * u.distRScale;
+	const rp2 = rp * rp;
+	let scl = 1;
+	if (u.distModel === 1) scl = 1 - u.distKA + u.distKA * rp2;
+	else if (u.distModel === 2) scl = 1 + u.distKA * rp2 + u.distKB * rp2 * rp2;
+	else if (u.distModel === 3) scl = u.distKA * rp2 * rp + u.distKB * rp2 + u.distKC * rp + (1 - u.distKA - u.distKB - u.distKC);
+	if (Math.abs(u.distManual) > .001) scl += u.distManual * 3e-4 * rr2;
+	return scl;
+}
+
+//#endregion
+//#region src/db/auto-crop.ts
+const SAMPLES_PER_EDGE = 1024;
+function computeAutoCropScale(u, aspect) {
+	const edgeScale = (cx, cy) => distortionScale(u, shaderRadius(cx, cy, aspect));
+	let peak = 1;
+	for (let i = 0; i <= SAMPLES_PER_EDGE; i++) {
+		const t = -.5 + i / SAMPLES_PER_EDGE;
+		peak = Math.max(peak, edgeScale(t, -.5), edgeScale(t, .5), edgeScale(-.5, t), edgeScale(.5, t));
 	}
+	return peak;
 }
 
 //#endregion
@@ -117,26 +137,16 @@ function computeStageUniforms(state, profile, aspect) {
 	};
 	const mode = state.mode;
 	const useProfile = mode === "profile" && profile !== null;
-	set(STAGE.distortion, "distManual", mode !== "off" ? state.distortion : 0);
-	if (useProfile && profile.distortion && state.distortionEnabled) {
-		const d = profile.distortion;
-		set(STAGE.distortion, "distModel", d.model === "poly3" ? 1 : d.model === "poly5" ? 2 : 3);
-		set(STAGE.distortion, "distKA", d.k[0] ?? 0);
-		set(STAGE.distortion, "distKB", d.k.length > 1 ? d.k[1] : d.k[0] ?? 0);
-		set(STAGE.distortion, "distKC", d.k[2] ?? 0);
-	} else {
-		set(STAGE.distortion, "distModel", 0);
-		set(STAGE.distortion, "distKA", 0);
-		set(STAGE.distortion, "distKB", 0);
-		set(STAGE.distortion, "distKC", 0);
-	}
+	const dist = distortionUniforms(useProfile && state.distortionEnabled ? profile : null, mode !== "off" ? state.distortion : 0);
+	for (const [key, value] of Object.entries(dist)) set(STAGE.distortion, key, value);
 	let cropScale = 1;
-	if (state.autoCrop && useProfile && profile.distortion && state.distortionEnabled) cropScale = computeAutoCropScale(profile.distortion.model, profile.distortion.k, state.distortion, aspect);
+	if (state.autoCrop && useProfile && profile.distortion && state.distortionEnabled) cropScale = computeAutoCropScale(dist, aspect);
 	set(STAGE.distortion, "cropScale", cropScale);
 	set(STAGE.ca, "caManual", mode === "manual" ? state.chromaticAberration : 0);
 	set(STAGE.ca, "caAspect", aspect);
 	if (useProfile && profile.tca && state.caEnabled) {
 		const t = profile.tca;
+		set(STAGE.ca, "tcaRScale", profile.radiusScale ?? 1);
 		if (t.model === "linear") {
 			set(STAGE.ca, "tcaModel", 1);
 			set(STAGE.ca, "tcaKR", t.k[0] ?? 1);
@@ -162,6 +172,7 @@ function computeStageUniforms(state, profile, aspect) {
 		set(STAGE.ca, "tcaCR", 0);
 		set(STAGE.ca, "tcaBB", 0);
 		set(STAGE.ca, "tcaCB", 0);
+		set(STAGE.ca, "tcaRScale", 1);
 	}
 	if (mode !== "off" && state.caAuto && (state.autoCaR !== 1 || state.autoCaB !== 1)) {
 		set(STAGE.ca, "tcaModel", 1);
@@ -171,6 +182,7 @@ function computeStageUniforms(state, profile, aspect) {
 		set(STAGE.ca, "tcaCR", 0);
 		set(STAGE.ca, "tcaBB", 0);
 		set(STAGE.ca, "tcaCB", 0);
+		set(STAGE.ca, "tcaRScale", 1);
 	}
 	set(STAGE.vignette, "vigManual", mode === "manual" ? state.vignetting : 0);
 	if (useProfile && profile.vignetting && state.vignetteEnabled) {
@@ -635,6 +647,7 @@ var lens_profiles_default = [
 		"model": "AEE SD19 & compatibles",
 		"mounts": ["aeeDV"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "equisolid",
 		"focalMin": 5,
 		"focalMax": 5,
@@ -662,6 +675,7 @@ var lens_profiles_default = [
 		"model": "iPhone XS back camera 4.25mm f/1.8 & compatibles",
 		"mounts": ["iPhoneXS"],
 		"cropFactor": 6.118,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.25,
 		"focalMax": 4.25,
@@ -718,6 +732,7 @@ var lens_profiles_default = [
 		"model": "iPhone XS back camera 6mm f/2.4 & compatibles",
 		"mounts": ["iPhoneXStele"],
 		"cropFactor": 8.667,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 6,
@@ -1042,6 +1057,7 @@ var lens_profiles_default = [
 		"model": "Canon DIGITAL IXUS 400 & compatibles (Standard)",
 		"mounts": ["canonIxus400"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.406,
 		"focalMax": 22.219,
@@ -1159,6 +1175,7 @@ var lens_profiles_default = [
 		"model": "Canon DIGITAL IXUS 400 & compatibles, with Tiffen MegaPlus 0.56 converter",
 		"mounts": ["canonIxus400"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.406,
 		"focalMax": 22.219,
@@ -1276,6 +1293,7 @@ var lens_profiles_default = [
 		"model": "Canon DIGITAL IXUS 80 IS & compatibles (Standard)",
 		"mounts": ["canonIxus80IS"],
 		"cropFactor": 6.02,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.2,
 		"focalMax": 18.6,
@@ -1735,6 +1753,7 @@ var lens_profiles_default = [
 		"model": "Canon DIGITAL IXUS i & compatibles (Standard)",
 		"mounts": ["canonIxusI"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.406,
 		"focalMax": 6.406,
@@ -1765,6 +1784,7 @@ var lens_profiles_default = [
 		"model": "Canon DIGITAL IXUS II & compatibles (Standard)",
 		"mounts": ["canonIxusII"],
 		"cropFactor": 6.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.406,
 		"focalMax": 10.813,
@@ -70653,6 +70673,7 @@ var lens_profiles_default = [
 		"model": "Canon G7 X & compatibles",
 		"mounts": ["canonG7X"],
 		"cropFactor": 2.72,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 36.8,
@@ -71379,6 +71400,7 @@ var lens_profiles_default = [
 		"model": "Canon IXUS 125 HS & compatibles",
 		"mounts": ["canonIxus125HS"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 21.5,
@@ -71447,6 +71469,7 @@ var lens_profiles_default = [
 		"model": "Canon IXUS 220 HS & compatibles, with CHDK's DNG",
 		"mounts": ["canonIxus220HS"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 21.5,
@@ -71512,6 +71535,7 @@ var lens_profiles_default = [
 		"model": "Canon IXY 220F & compatibles",
 		"mounts": ["canonIxy220F"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 21.5,
@@ -72069,6 +72093,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A1200 & compatibles (Standard)",
 		"mounts": ["canonA1200"],
 		"cropFactor": 5.61,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 20,
@@ -72161,6 +72186,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A4000 IS & compatibles, with CHDK's DNG",
 		"mounts": ["canonA4000IS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 40,
@@ -72329,6 +72355,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A495 & compatibles, with CHDK's DNG",
 		"mounts": ["canonA495"],
 		"cropFactor": 5.39,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.6,
 		"focalMax": 21.6,
@@ -72500,6 +72527,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A510 & compatibles (Standard)",
 		"mounts": ["canonA510"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.813,
 		"focalMax": 23.188,
@@ -72595,6 +72623,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A610 & compatibles (Standard)",
 		"mounts": ["canonA610"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 29.2,
@@ -72681,6 +72710,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A610 & compatibles, with CHDK's DNG",
 		"mounts": ["canonA610"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 29.2,
@@ -74495,6 +74525,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A640 & compatibles",
 		"mounts": ["canonA640"],
 		"cropFactor": 4.79,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 29.2,
@@ -75411,6 +75442,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A640 & compatibles, with WC-DC58N",
 		"mounts": ["canonA640"],
 		"cropFactor": 4.79,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 29.2,
@@ -75537,6 +75569,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A650 IS & compatibles (Standard)",
 		"mounts": ["canonA650IS"],
 		"cropFactor": 4.67712,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.4,
 		"focalMax": 44.4,
@@ -75620,6 +75653,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A70 & compatibles (Standard)",
 		"mounts": ["canonA70"],
 		"cropFactor": 6.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.406,
 		"focalMax": 16.219,
@@ -75733,6 +75767,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A720 IS & compatibles (Standard)",
 		"mounts": ["canonA720IS"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 34.8,
@@ -76248,6 +76283,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A80 & compatibles (Standard)",
 		"mounts": ["canonA80"],
 		"cropFactor": 4.85,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.813,
 		"focalMax": 23.406,
@@ -76325,6 +76361,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A80 & compatibles, with Tiffen 0.56x converter",
 		"mounts": ["canonA80"],
 		"cropFactor": 4.85,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.813,
 		"focalMax": 23.406,
@@ -76411,6 +76448,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot A80 & compatibles, with Tiffen 2x converter",
 		"mounts": ["canonA80"],
 		"cropFactor": 4.85,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 11.438,
 		"focalMax": 23.406,
@@ -76459,6 +76497,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G1 & compatibles (Standard)",
 		"mounts": ["canonG1"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 21,
@@ -76533,6 +76572,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G1 X Mark III & compatibles (Standard)",
 		"mounts": ["canonG1X3"],
 		"cropFactor": 1.613,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 15,
 		"focalMax": 45,
@@ -76878,6 +76918,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G11 & compatibles (Standard)",
 		"mounts": ["canonG11"],
 		"cropFactor": 4.554,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 30.5,
@@ -77015,6 +77056,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G12 & compatibles (Standard)",
 		"mounts": ["canonG12"],
 		"cropFactor": 4.63,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 30.5,
@@ -77097,6 +77139,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G15 & compatibles (Standard)",
 		"mounts": ["canonG15"],
 		"cropFactor": 4.65,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 30.5,
@@ -77252,6 +77295,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G16 & compatibles",
 		"mounts": ["canonG16"],
 		"cropFactor": 4.67,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 30.5,
@@ -77378,6 +77422,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G1X & compatibles (Standard)",
 		"mounts": ["canonG1X"],
 		"cropFactor": 1.85,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 15.1,
 		"focalMax": 60.4,
@@ -78042,6 +78087,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G1X Mark II & compatibles",
 		"mounts": ["canonG1X2"],
 		"cropFactor": 1.93,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12.5,
 		"focalMax": 62.5,
@@ -78687,6 +78733,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G2 & compatibles (Standard)",
 		"mounts": ["canonG2"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 21,
@@ -78809,6 +78856,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G2 & compatibles, with Geobartic 0.5x converter",
 		"mounts": ["canonG2"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 12.5,
@@ -78877,6 +78925,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G3 & compatibles (Standard)",
 		"mounts": ["canonG3"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.188,
 		"focalMax": 28.813,
@@ -79747,6 +79796,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G3 & compatibles, with WC-DC58N",
 		"mounts": ["canonG3"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.19,
 		"focalMax": 10.2,
@@ -79813,6 +79863,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot G3 X & compatibles",
 		"mounts": ["canonG3X"],
 		"cropFactor": 2.727,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 220,
@@ -80259,6 +80310,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot Pro1 & compatibles (Standard)",
 		"mounts": ["canonPro1"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.188,
 		"focalMax": 50.813,
@@ -80324,6 +80376,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot Pro90 IS & compatibles (Standard)",
 		"mounts": ["canonPro90"],
 		"cropFactor": 5.28,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 70,
@@ -80425,6 +80478,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S1 IS & compatibles (Standard)",
 		"mounts": ["canonS1"],
 		"cropFactor": 6.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 58,
@@ -80490,6 +80544,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S100 & compatibles",
 		"mounts": ["canonS100"],
 		"cropFactor": 4.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.2,
 		"focalMax": 26,
@@ -80637,6 +80692,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S110 & compatibles",
 		"mounts": ["canonS110"],
 		"cropFactor": 4.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.2,
 		"focalMax": 26,
@@ -81068,6 +81124,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S120 & compatibles",
 		"mounts": ["canonS120"],
 		"cropFactor": 4.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.2,
 		"focalMax": 26,
@@ -81215,6 +81272,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S2 IS & compatibles (Standard)",
 		"mounts": ["canonS2"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -81307,6 +81365,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S2 IS & compatibles, with TC-DC58B",
 		"mounts": ["canonS2"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 16.4,
 		"focalMax": 72,
@@ -81367,6 +81426,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S30 & compatibles (Standard)",
 		"mounts": ["canonS30"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.094,
 		"focalMax": 21.313,
@@ -81464,6 +81524,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S5 IS & compatibles (Standard)",
 		"mounts": ["canonS5"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -81556,6 +81617,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S5 IS & compatibles, with TC-DC58B",
 		"mounts": ["canonS5"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 16.4,
 		"focalMax": 72,
@@ -81616,6 +81678,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S70 & compatibles (Standard)",
 		"mounts": ["canonS70"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.813,
 		"focalMax": 20.688,
@@ -81727,6 +81790,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S70 & compatibles, with TC-DC10 2x converter",
 		"mounts": ["canonS70"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 13.156,
 		"focalMax": 20.688,
@@ -81903,6 +81967,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot S95 & compatibles",
 		"mounts": ["canonS95"],
 		"cropFactor": 4.67,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 22.5,
@@ -82041,6 +82106,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SD200 & compatibles (Standard)",
 		"mounts": ["canonSD200"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -82161,6 +82227,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SD500 & compatibles (Standard)",
 		"mounts": ["canonSD500"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.7,
 		"focalMax": 23.1,
@@ -82266,6 +82333,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SD950 IS & compatibles (Standard)",
 		"mounts": ["canonSD950"],
 		"cropFactor": 4.7,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.7,
 		"focalMax": 28.5,
@@ -82311,6 +82379,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX10 IS",
 		"mounts": ["canonSX10IS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.9,
 		"focalMax": 95.5,
@@ -82491,6 +82560,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX150 IS & compatibles (Standard)",
 		"mounts": ["canonSX150IS"],
 		"cropFactor": 5.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 60,
@@ -82604,6 +82674,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX150 IS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX150IS"],
 		"cropFactor": 5.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 60,
@@ -83599,6 +83670,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX160 IS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX160IS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 80,
@@ -85070,6 +85142,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX220 HS & compatibles (Standard)",
 		"mounts": ["canonSX220HS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 70,
@@ -85130,6 +85203,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX220 HS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX220HS", "canonSX230HS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5,
 		"focalMax": 70,
@@ -86465,6 +86539,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX260 HS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX260HS"],
 		"cropFactor": 5.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 90,
@@ -87252,6 +87327,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX30 IS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX30IS"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 150.5,
@@ -88153,6 +88229,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX50 HS & compatibles",
 		"mounts": ["canonSX50HS"],
 		"cropFactor": 5.61,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 171.6,
@@ -88363,6 +88440,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX510 HS & compatibles",
 		"mounts": ["canonSX510HS"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 129,
@@ -88408,6 +88486,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX510 HS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX510HS"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 129,
@@ -88473,6 +88552,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX60 HS & compatibles",
 		"mounts": ["canonSX60HS"],
 		"cropFactor": 5.61,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 3.8,
 		"focalMax": 247,
@@ -88641,6 +88721,7 @@ var lens_profiles_default = [
 		"model": "Canon PowerShot SX710 HS & compatibles, with CHDK's DNG",
 		"mounts": ["canonSX710HS"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 135,
@@ -105525,6 +105606,7 @@ var lens_profiles_default = [
 		"model": "G5 X Mark II & compatibles",
 		"mounts": ["canonG5X2"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 44,
@@ -106566,6 +106648,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles (Standard)",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 48.5,
@@ -106685,6 +106768,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 1 inch lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 12.7,
@@ -106750,6 +106834,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 12 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 26.2,
@@ -106833,6 +106918,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 16 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 25.1,
@@ -106925,6 +107011,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 2 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 15.5,
@@ -106999,6 +107086,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 20 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 31,
@@ -107091,6 +107179,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 24 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 32.3,
@@ -107183,6 +107272,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 32 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 48.5,
@@ -107284,6 +107374,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 4 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 19.8,
@@ -107385,6 +107476,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 6 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 21.7,
@@ -107459,6 +107551,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, macro at 8 inches lens-to-subject",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 23.5,
@@ -107560,6 +107653,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, with Sakar 1858W",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 48.5,
@@ -107634,6 +107728,7 @@ var lens_profiles_default = [
 		"model": "DSC-F707 & compatibles, with VCL-HGD0758 wide angle",
 		"mounts": ["sony707"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9.7,
 		"focalMax": 48.5,
@@ -107762,6 +107857,7 @@ var lens_profiles_default = [
 		"model": "DSC-F828 & compatibles (Standard)",
 		"mounts": ["sony828"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 51,
@@ -107899,6 +107995,7 @@ var lens_profiles_default = [
 		"model": "DSC-F828 & compatibles, at 2 feet lens-to-subject",
 		"mounts": ["sony828"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 51,
@@ -108036,6 +108133,7 @@ var lens_profiles_default = [
 		"model": "DSC-H1 & compatibles (Standard)",
 		"mounts": ["sonyH1"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -108155,6 +108253,7 @@ var lens_profiles_default = [
 		"model": "DSC-H1 & compatibles, with VCL-DH0758 0.7x converter",
 		"mounts": ["sonyH1"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -108274,6 +108373,7 @@ var lens_profiles_default = [
 		"model": "DSC-H1 & compatibles, with VCL-DH1758 1.7x converter",
 		"mounts": ["sonyH1"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 22.5,
 		"focalMax": 72,
@@ -108329,6 +108429,7 @@ var lens_profiles_default = [
 		"model": "DSC-R1 & compatibles (Standard)",
 		"mounts": ["sonyR1"],
 		"cropFactor": 1.68,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 14.3,
 		"focalMax": 71.5,
@@ -108475,6 +108576,7 @@ var lens_profiles_default = [
 		"model": "DSC-RX1R & compatibles",
 		"mounts": ["sonyRX1"],
 		"cropFactor": 1,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -108523,6 +108625,7 @@ var lens_profiles_default = [
 		"model": "DSC-S60 & compatibles (Standard)",
 		"mounts": ["sonyS60"],
 		"cropFactor": 6.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 18,
@@ -108642,6 +108745,7 @@ var lens_profiles_default = [
 		"model": "DSC-S85 & compatibles (Standard)",
 		"mounts": ["sonyS85"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 7,
@@ -108669,6 +108773,7 @@ var lens_profiles_default = [
 		"model": "DSC-S85 & compatibles, with VCL-MHG07a converter",
 		"mounts": ["sonyS85"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 7,
@@ -108696,6 +108801,7 @@ var lens_profiles_default = [
 		"model": "DSC-T1 & compatibles (Standard)",
 		"mounts": ["sonyT1"],
 		"cropFactor": 5.65,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.7,
 		"focalMax": 20.1,
@@ -108788,6 +108894,7 @@ var lens_profiles_default = [
 		"model": "DSC-V1 & compatibles (Standard)",
 		"mounts": ["sonyV1"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 28,
@@ -108892,6 +108999,7 @@ var lens_profiles_default = [
 		"model": "DSC-V1 & compatibles, with VCL-DEH07V converter",
 		"mounts": ["sonyV1"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 7,
@@ -108922,6 +109030,7 @@ var lens_profiles_default = [
 		"model": "DSC-V1 & compatibles, with VCL-DEH17V converter",
 		"mounts": ["sonyV1"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 28,
 		"focalMax": 28,
@@ -108948,6 +109057,7 @@ var lens_profiles_default = [
 		"model": "DSC-W1 & compatibles (Standard)",
 		"mounts": ["sonyW1"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.9,
 		"focalMax": 23.7,
@@ -109074,6 +109184,7 @@ var lens_profiles_default = [
 		"model": "EX-P600 & compatibles (Standard)",
 		"mounts": ["casioP600"],
 		"cropFactor": 4.65,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 28.4,
@@ -109169,6 +109280,7 @@ var lens_profiles_default = [
 		"model": "EX-P600 & compatibles, with WC-DC58A",
 		"mounts": ["casioP600"],
 		"cropFactor": 4.65,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 7.1,
@@ -109199,6 +109311,7 @@ var lens_profiles_default = [
 		"model": "EX-Z4 & compatibles (Standard)",
 		"mounts": ["casioZ4"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -109282,6 +109395,7 @@ var lens_profiles_default = [
 		"model": "EX-Z750 & compatibles (Standard)",
 		"mounts": ["casioZ750"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.9,
 		"focalMax": 23.7,
@@ -109337,6 +109451,7 @@ var lens_profiles_default = [
 		"model": "QV-3500EX & compatibles (Standard)",
 		"mounts": ["casioQV3500"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.13,
 		"focalMax": 20.74,
@@ -109396,6 +109511,7 @@ var lens_profiles_default = [
 		"model": "QV-3500EX & compatibles, with Raynox 0.66x",
 		"mounts": ["casioQV3500"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.13,
 		"focalMax": 7.13,
@@ -111434,6 +111550,7 @@ var lens_profiles_default = [
 		"model": "DJI MFT 15mm F1.7 ASPH",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 15,
 		"focalMax": 15,
@@ -111745,6 +111862,7 @@ var lens_profiles_default = [
 		"model": "FC3411 & compatibles",
 		"mounts": ["djiFC3411"],
 		"cropFactor": 2.63,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.38,
 		"focalMax": 8.4,
@@ -111801,6 +111919,7 @@ var lens_profiles_default = [
 		"model": "FC3582 & compatibles",
 		"mounts": ["djiFC3582"],
 		"cropFactor": 3.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.7,
 		"focalMax": 6.7,
@@ -111857,6 +111976,7 @@ var lens_profiles_default = [
 		"model": "FC6310 & compatibles",
 		"mounts": ["djiFC6310"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.7777777777777777,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 8.8,
@@ -111895,6 +112015,7 @@ var lens_profiles_default = [
 		"model": "FC6310R & compatibles",
 		"mounts": ["djiFC6310R"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 8.8,
@@ -111922,6 +112043,7 @@ var lens_profiles_default = [
 		"model": "Mavic Pro FC220 & compatibles",
 		"mounts": ["djiMavicProFC220"],
 		"cropFactor": 5.64,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.7,
 		"focalMax": 4.7,
@@ -111978,6 +112100,7 @@ var lens_profiles_default = [
 		"model": "Phantom 3 Pro",
 		"mounts": ["dijPhantom3ProFC300X"],
 		"cropFactor": 5.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 3.6,
 		"focalMax": 3.6,
@@ -112015,6 +112138,7 @@ var lens_profiles_default = [
 		"model": "Phantom Vision FC200 & compatibles",
 		"mounts": ["dijPhantomVisionFC200"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "equisolid",
 		"focalMin": 5,
 		"focalMax": 5,
@@ -112076,6 +112200,7 @@ var lens_profiles_default = [
 		"model": "35mm f/1.7",
 		"mounts": ["C"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -112106,6 +112231,7 @@ var lens_profiles_default = [
 		"model": "FinePix 2800 ZOOM & compatibles (Standard)",
 		"mounts": ["fuji2800"],
 		"cropFactor": 6.3333333,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 36,
@@ -114849,6 +114975,7 @@ var lens_profiles_default = [
 		"model": "FinePix F11 & compatibles (Standard)",
 		"mounts": ["fujiF11"],
 		"cropFactor": 4.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8,
 		"focalMax": 24,
@@ -114917,6 +115044,7 @@ var lens_profiles_default = [
 		"model": "FinePix F200EXR & compatibles (Standard)",
 		"mounts": ["fujiF200exr"],
 		"cropFactor": 4.341,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.4,
 		"focalMax": 32,
@@ -114991,6 +115119,7 @@ var lens_profiles_default = [
 		"model": "FinePix F601 ZOOM & compatibles (Standard)",
 		"mounts": ["fuji601"],
 		"cropFactor": 4.487,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.3,
 		"focalMax": 24.9,
@@ -115046,6 +115175,7 @@ var lens_profiles_default = [
 		"model": "FinePix F770EXR & compatibles (Standard)",
 		"mounts": ["fujif770exr"],
 		"cropFactor": 5.43,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.6,
 		"focalMax": 92,
@@ -115193,6 +115323,7 @@ var lens_profiles_default = [
 		"model": "FinePix F810 & compatibles (Standard)",
 		"mounts": ["fuji810"],
 		"cropFactor": 4.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.2,
 		"focalMax": 28.8,
@@ -115295,6 +115426,7 @@ var lens_profiles_default = [
 		"model": "FinePix F810 & compatibles, with WL-FXE01 (full wide)",
 		"mounts": ["fuji810"],
 		"cropFactor": 4.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.2,
 		"focalMax": 7.2,
@@ -115332,6 +115464,7 @@ var lens_profiles_default = [
 		"model": "FinePix HS20EXR & compatibles (Standard)",
 		"mounts": ["fujihs20exr"],
 		"cropFactor": 5.71,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.2,
 		"focalMax": 126,
@@ -115692,6 +115825,7 @@ var lens_profiles_default = [
 		"model": "FinePix S5500 & compatibles (Standard)",
 		"mounts": ["fujiS5500"],
 		"cropFactor": 6.491,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.7,
 		"focalMax": 57,
@@ -115832,6 +115966,7 @@ var lens_profiles_default = [
 		"model": "FinePix S5600",
 		"mounts": ["fujiS5600"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.3,
 		"focalMax": 63,
@@ -115892,6 +116027,7 @@ var lens_profiles_default = [
 		"model": "FinePix S602 ZOOM & compatibles (Standard)",
 		"mounts": ["fuji602"],
 		"cropFactor": 4.487,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.8,
 		"focalMax": 46.8,
@@ -116012,6 +116148,7 @@ var lens_profiles_default = [
 		"model": "FinePix S9000 & compatibles (Standard)",
 		"mounts": ["fujiS9000"],
 		"cropFactor": 4.48,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.2,
 		"focalMax": 67,
@@ -116132,6 +116269,7 @@ var lens_profiles_default = [
 		"model": "Fujifilm FinePix A370",
 		"mounts": ["fujiA370"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.9,
 		"focalMax": 17.4,
@@ -116179,6 +116317,7 @@ var lens_profiles_default = [
 		"model": "Fujifilm X-S1",
 		"mounts": ["fujiXS1"],
 		"cropFactor": 3.93,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 158.6,
@@ -117022,6 +117161,7 @@ var lens_profiles_default = [
 		"model": "Fujifilm XQ1",
 		"mounts": ["fujiXQ1"],
 		"cropFactor": 3.91,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.4,
 		"focalMax": 25.6,
@@ -118160,6 +118300,7 @@ var lens_profiles_default = [
 		"model": "X10 & compatibles (Standard)",
 		"mounts": ["fujix10"],
 		"cropFactor": 3.93,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 28.4,
@@ -135553,6 +135694,7 @@ var lens_profiles_default = [
 		"model": "Git2 & compatibles",
 		"mounts": ["git2"],
 		"cropFactor": 5.57,
+		"aspectRatio": 1.3333333333333333,
 		"type": "equisolid",
 		"focalMin": 3,
 		"focalMax": 3,
@@ -135587,6 +135729,7 @@ var lens_profiles_default = [
 		"model": "GoPro Hero3+ black & compatibles",
 		"mounts": ["goProHero3+"],
 		"cropFactor": 5.42,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 15,
 		"focalMax": 15,
@@ -135614,6 +135757,7 @@ var lens_profiles_default = [
 		"model": "HD2 & compatibles",
 		"mounts": ["goProHero"],
 		"cropFactor": 6.4,
+		"aspectRatio": 1.3333333333333333,
 		"type": "fisheye",
 		"focalMin": 2.5,
 		"focalMax": 2.5,
@@ -135641,6 +135785,7 @@ var lens_profiles_default = [
 		"model": "HERO10 Black & compatibles",
 		"mounts": ["goProHero10bl"],
 		"cropFactor": 5.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 2.7,
 		"focalMax": 2.7,
@@ -135668,6 +135813,7 @@ var lens_profiles_default = [
 		"model": "HERO11 Black & compatibles",
 		"mounts": ["goProHero11bl"],
 		"cropFactor": 5.54,
+		"aspectRatio": 1.1428571428571428,
 		"type": "fisheye",
 		"focalMin": 2.7,
 		"focalMax": 2.7,
@@ -135695,6 +135841,7 @@ var lens_profiles_default = [
 		"model": "HERO4",
 		"mounts": ["goProHero4"],
 		"cropFactor": 7.66,
+		"aspectRatio": 1.3333333333333333,
 		"type": "equisolid",
 		"focalMin": 3,
 		"focalMax": 3,
@@ -135722,6 +135869,7 @@ var lens_profiles_default = [
 		"model": "HERO4 black",
 		"mounts": ["goProHero4black"],
 		"cropFactor": 5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "stereographic",
 		"focalMin": 3,
 		"focalMax": 3,
@@ -135775,6 +135923,7 @@ var lens_profiles_default = [
 		"model": "L2D-20c & compatibles",
 		"mounts": ["l2d20c"],
 		"cropFactor": 1.953,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12.3,
 		"focalMax": 12.3,
@@ -135802,6 +135951,7 @@ var lens_profiles_default = [
 		"model": "Honor 6A & compatibles",
 		"mounts": ["dlil22"],
 		"cropFactor": 8.235,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 3.4,
 		"focalMax": 3.4,
@@ -135839,6 +135989,7 @@ var lens_profiles_default = [
 		"model": "Huawei P10 Lite & compatibles",
 		"mounts": ["waslx1a"],
 		"cropFactor": 6.88,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 3.8,
 		"focalMax": 3.8,
@@ -135876,6 +136027,7 @@ var lens_profiles_default = [
 		"model": "Huawei P20 Pro & compatibles",
 		"mounts": ["cltl29"],
 		"cropFactor": 4.55,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4,
 		"focalMax": 4,
@@ -135932,6 +136084,7 @@ var lens_profiles_default = [
 		"model": "P30 Pro",
 		"mounts": ["vogl29"],
 		"cropFactor": 4.86,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 2.3,
 		"focalMax": 14.5,
@@ -137628,6 +137781,7 @@ var lens_profiles_default = [
 		"model": "Kodak CX6330 & compatibles",
 		"mounts": ["kodakCX6330"],
 		"cropFactor": 6.593,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.6,
 		"focalMax": 16.8,
@@ -137705,6 +137859,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE 7 & compatibles (Standard)",
 		"mounts": ["kmD7"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 50.8,
@@ -137801,6 +137956,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE 7 & compatibles, with ACW-100 converter",
 		"mounts": ["kmD7"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.3,
 		"focalMax": 7.3,
@@ -137850,6 +138006,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE G400 & compatibles (Standard)",
 		"mounts": ["kmG400"],
 		"cropFactor": 6.144,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.6,
 		"focalMax": 16.8,
@@ -137936,6 +138093,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE X & compatibles (Standard)",
 		"mounts": ["kmXt"],
 		"cropFactor": 6.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.7,
 		"focalMax": 17.1,
@@ -138056,6 +138214,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z1 & compatibles (Standard)",
 		"mounts": ["kmZ1"],
 		"cropFactor": 6.545,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 58,
@@ -138184,6 +138343,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z1 & compatibles, with ZCW-100",
 		"mounts": ["kmZ1"],
 		"cropFactor": 6.545,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.4,
 		"focalMax": 4.4,
@@ -138211,6 +138371,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z10 & compatibles (Standard)",
 		"mounts": ["kmZ10"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 48,
@@ -138315,6 +138476,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z10 & compatibles, with ZCW-200",
 		"mounts": ["kmZ10"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.2,
 		"focalMax": 4.2,
@@ -138345,6 +138507,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z2 & compatibles (Standard)",
 		"mounts": ["kmZ2"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.3,
 		"focalMax": 63,
@@ -138437,6 +138600,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z2 & compatibles, with ZCW-100",
 		"mounts": ["kmZ2"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.3,
 		"focalMax": 10.4,
@@ -138484,6 +138648,7 @@ var lens_profiles_default = [
 		"model": "DiMAGE Z3 & compatibles (Standard)",
 		"mounts": ["kmZ3"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.859,
 		"focalMax": 69.454,
@@ -138832,6 +138997,7 @@ var lens_profiles_default = [
 		"model": "Digilux 2 & compatibles (Standard)",
 		"mounts": ["leicaDigilux2"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 22.5,
@@ -138981,6 +139147,7 @@ var lens_profiles_default = [
 		"model": "DMC-FX7 & compatibles (Standard)",
 		"mounts": ["panasonicFX7"],
 		"cropFactor": 6.05,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -139078,6 +139245,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ10 & compatibles (Standard)",
 		"mounts": ["panasonicFZ10"],
 		"cropFactor": 5.84,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -139173,6 +139341,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ200 & compatibles (Standard)",
 		"mounts": ["panasonicDMCFZ200"],
 		"cropFactor": 5.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 108,
@@ -140257,6 +140426,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ28 & compatibles (Standard)",
 		"mounts": ["panasonicFZ28"],
 		"cropFactor": 5.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.8,
 		"focalMax": 86.4,
@@ -140385,6 +140555,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ3 & compatibles (Standard)",
 		"mounts": ["panasonicFZ3"],
 		"cropFactor": 7.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.6,
 		"focalMax": 55.2,
@@ -140504,6 +140675,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ30 & compatibles (Standard)",
 		"mounts": ["panasonicFZ30"],
 		"cropFactor": 4.73,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.4,
 		"focalMax": 88.8,
@@ -140614,6 +140786,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ5 & compatibles (Standard)",
 		"mounts": ["panasonicFZ5"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 72,
@@ -140706,6 +140879,7 @@ var lens_profiles_default = [
 		"model": "DMC-LX1 & compatibles (Standard)",
 		"mounts": ["panasonicLX1"],
 		"cropFactor": 4.45,
+		"aspectRatio": 1.7777777777777777,
 		"type": "rectilinear",
 		"focalMin": 6.3,
 		"focalMax": 25.2,
@@ -140960,6 +141134,7 @@ var lens_profiles_default = [
 		"model": "DMC-LX100 & compatibles",
 		"mounts": ["panasonicDMCLX100"],
 		"cropFactor": 2.21,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 10.9,
 		"focalMax": 34,
@@ -141691,6 +141866,7 @@ var lens_profiles_default = [
 		"model": "DMC-LX3 & compatibles (Standard)",
 		"mounts": ["panasonicLX3"],
 		"cropFactor": 4.7,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.1,
 		"focalMax": 12.8,
@@ -141831,6 +142007,7 @@ var lens_profiles_default = [
 		"model": "DMC-LX5 & compatibles (Standard)",
 		"mounts": ["panasonicLX5"],
 		"cropFactor": 4.71,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.1,
 		"focalMax": 19.2,
@@ -141905,6 +142082,7 @@ var lens_profiles_default = [
 		"model": "DMC-LX7 & compatibles (Standard)",
 		"mounts": ["panasonicLX7"],
 		"cropFactor": 5.1,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.7,
 		"focalMax": 17.7,
@@ -142480,6 +142658,7 @@ var lens_profiles_default = [
 		"model": "DMC-LZ2 & compatibles (Standard)",
 		"mounts": ["panasonicLZ2"],
 		"cropFactor": 6.06,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 36.6,
@@ -142584,6 +142763,7 @@ var lens_profiles_default = [
 		"model": "DMC-TZ100 & compatibles",
 		"mounts": ["panasonicTZ100"],
 		"cropFactor": 2.75,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 9.1,
 		"focalMax": 91,
@@ -142791,6 +142971,7 @@ var lens_profiles_default = [
 		"model": "DMC-TZ70 & compatibles",
 		"mounts": ["panasonicTZ70"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 129,
@@ -143037,6 +143218,7 @@ var lens_profiles_default = [
 		"model": "FZ1000 & compatibles",
 		"mounts": ["panasonicFZ1000"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 9.1,
 		"focalMax": 146,
@@ -143265,6 +143447,7 @@ var lens_profiles_default = [
 		"model": "FZ150 & compatibles",
 		"mounts": ["panasonicFZ150"],
 		"cropFactor": 5.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 54.7,
@@ -143433,6 +143616,7 @@ var lens_profiles_default = [
 		"model": "FZ2000 & compatibles",
 		"mounts": ["panasonicFZ2000"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 176,
@@ -144781,6 +144965,7 @@ var lens_profiles_default = [
 		"model": "LG G4 & compatibles",
 		"mounts": ["lgH815"],
 		"cropFactor": 6.34,
+		"aspectRatio": 1.7777777777777777,
 		"type": "rectilinear",
 		"focalMin": 4.42,
 		"focalMax": 4.42,
@@ -144970,6 +145155,7 @@ var lens_profiles_default = [
 		"model": "120mm f/32.0-4.0",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 120,
 		"focalMax": 120,
@@ -145285,6 +145471,7 @@ var lens_profiles_default = [
 		"model": "150mm f/32.0-3.5",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 150,
 		"focalMax": 150,
@@ -145640,6 +145827,7 @@ var lens_profiles_default = [
 		"model": "35mm f/22.0-3.5",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -145955,6 +146143,7 @@ var lens_profiles_default = [
 		"model": "Mamiya 35mm f/3.5",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .577,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -145978,6 +146167,7 @@ var lens_profiles_default = [
 		"model": "Mamiya 55-110mm f/4.5",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .577,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 55,
 		"focalMax": 110,
@@ -146057,6 +146247,7 @@ var lens_profiles_default = [
 		"model": "Mamiya 80mm f/2.8",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .577,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 80,
 		"focalMax": 80,
@@ -152731,6 +152922,7 @@ var lens_profiles_default = [
 		"model": "Coolpix A & compatibles",
 		"mounts": ["nikonA"],
 		"cropFactor": 1.523,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 18.5,
 		"focalMax": 18.5,
@@ -152769,6 +152961,7 @@ var lens_profiles_default = [
 		"model": "Coolpix P330 & compatibles (Standard)",
 		"mounts": ["nikonP330"],
 		"cropFactor": 4.706,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.1,
 		"focalMax": 25.5,
@@ -152940,6 +153133,7 @@ var lens_profiles_default = [
 		"model": "Coolpix P60 & compatibles (Standard)",
 		"mounts": ["nikonP60"],
 		"cropFactor": 5.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.4,
 		"focalMax": 32,
@@ -153032,6 +153226,7 @@ var lens_profiles_default = [
 		"model": "Coolpix P7000 & compatibles",
 		"mounts": ["nikonP7000"],
 		"cropFactor": 4.69,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 42.6,
@@ -153088,6 +153283,7 @@ var lens_profiles_default = [
 		"model": "Coolpix P7800 & compatibles",
 		"mounts": ["nikonP7800"],
 		"cropFactor": 4.67,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 42.8,
@@ -153319,6 +153515,7 @@ var lens_profiles_default = [
 		"model": "Coolpix S3300 & compatibles",
 		"mounts": ["nikonS3300"],
 		"cropFactor": 5.65,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.6,
 		"focalMax": 27.6,
@@ -153368,6 +153565,7 @@ var lens_profiles_default = [
 		"model": "E4800 & compatibles (Standard)",
 		"mounts": ["nikon4800"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 50,
@@ -153451,6 +153649,7 @@ var lens_profiles_default = [
 		"model": "E5000 & compatibles (Standard)",
 		"mounts": ["nikon5000"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 21.4,
@@ -153561,6 +153760,7 @@ var lens_profiles_default = [
 		"model": "E5000 & compatibles, with WC-E68 (full wide)",
 		"mounts": ["nikon5000"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 7.1,
@@ -153588,6 +153788,7 @@ var lens_profiles_default = [
 		"model": "E5400 & compatibles (Standard)",
 		"mounts": ["nikon5400"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 24,
@@ -153716,6 +153917,7 @@ var lens_profiles_default = [
 		"model": "E5400 & compatibles, with WC-E80",
 		"mounts": ["nikon5400"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 24,
@@ -153808,6 +154010,7 @@ var lens_profiles_default = [
 		"model": "E5700 & compatibles (Standard)",
 		"mounts": ["nikon5700"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.9,
 		"focalMax": 71.2,
@@ -153984,6 +154187,7 @@ var lens_profiles_default = [
 		"model": "E5700 & compatibles, with TC-E15ED (full tele)",
 		"mounts": ["nikon5700"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 71.2,
 		"focalMax": 71.2,
@@ -154014,6 +154218,7 @@ var lens_profiles_default = [
 		"model": "E5700 & compatibles, with WC-E80 (full wide)",
 		"mounts": ["nikon5700"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.9,
 		"focalMax": 8.9,
@@ -154044,6 +154249,7 @@ var lens_profiles_default = [
 		"model": "E7900 & compatibles (Standard)",
 		"mounts": ["nikon7900"],
 		"cropFactor": 4.86,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.8,
 		"focalMax": 23.4,
@@ -154145,6 +154351,7 @@ var lens_profiles_default = [
 		"model": "E8400 & compatibles (Standard)",
 		"mounts": ["nikon8400"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 21.6,
@@ -154200,6 +154407,7 @@ var lens_profiles_default = [
 		"model": "E8400 & compatibles, with WC-E75",
 		"mounts": ["nikon8400"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.1,
 		"focalMax": 21.6,
@@ -154283,6 +154491,7 @@ var lens_profiles_default = [
 		"model": "E8800 & compatibles (Standard)",
 		"mounts": ["nikon8800"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.9,
 		"focalMax": 89,
@@ -154384,6 +154593,7 @@ var lens_profiles_default = [
 		"model": "E8800 & compatibles, with WM-E80",
 		"mounts": ["nikon8800"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.9,
 		"focalMax": 35.9,
@@ -154467,6 +154677,7 @@ var lens_profiles_default = [
 		"model": "E950 & compatibles (Standard)",
 		"mounts": ["nikon950"],
 		"cropFactor": 5.408,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 21,
@@ -154562,6 +154773,7 @@ var lens_profiles_default = [
 		"model": "E990 & compatibles (Standard)",
 		"mounts": ["nikon990"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.2,
 		"focalMax": 23.4,
@@ -154753,6 +154965,7 @@ var lens_profiles_default = [
 		"model": "E990 & compatibles, with WC-E63",
 		"mounts": ["nikon990"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.2,
 		"focalMax": 8.2,
@@ -154780,6 +154993,7 @@ var lens_profiles_default = [
 		"model": "E995 & compatibles (Standard)",
 		"mounts": ["nikon995"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.2,
 		"focalMax": 31,
@@ -154835,6 +155049,7 @@ var lens_profiles_default = [
 		"model": "E995 & compatibles, with TC-E2",
 		"mounts": ["nikon995"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 31,
@@ -154945,6 +155160,7 @@ var lens_profiles_default = [
 		"model": "E995 & compatibles, with WC-E24",
 		"mounts": ["nikon995"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.2,
 		"focalMax": 32,
@@ -155090,6 +155306,7 @@ var lens_profiles_default = [
 		"model": "E995 & compatibles, with WC-E63",
 		"mounts": ["nikon995"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.2,
 		"focalMax": 16.9,
@@ -213122,6 +213339,7 @@ var lens_profiles_default = [
 		"model": "Coolpix P1000 & compatibles",
 		"mounts": ["nikonP1000"],
 		"cropFactor": 5.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 539,
@@ -213818,6 +214036,7 @@ var lens_profiles_default = [
 		"model": "C-50Z & compatibles (Standard)",
 		"mounts": ["olympusC50"],
 		"cropFactor": 4.9,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.8,
 		"focalMax": 23.4,
@@ -213873,6 +214092,7 @@ var lens_profiles_default = [
 		"model": "C2040Z & compatibles (Standard)",
 		"mounts": ["olympus2040"],
 		"cropFactor": 4.93,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 21.3,
@@ -214006,6 +214226,7 @@ var lens_profiles_default = [
 		"model": "C2040Z & compatibles, with WCON-08B",
 		"mounts": ["olympus2040"],
 		"cropFactor": 4.93,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 21.3,
@@ -214139,6 +214360,7 @@ var lens_profiles_default = [
 		"model": "C4000Z & compatibles (Standard)",
 		"mounts": ["olympus4000"],
 		"cropFactor": 4.92,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.8,
 		"focalMax": 19.1,
@@ -214240,6 +214462,7 @@ var lens_profiles_default = [
 		"model": "C4000Z & compatibles, with A-28 iS/L converter",
 		"mounts": ["olympus4000"],
 		"cropFactor": 4.92,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.8,
 		"focalMax": 19.9,
@@ -214332,6 +214555,7 @@ var lens_profiles_default = [
 		"model": "C5060WZ & compatibles (Standard)",
 		"mounts": ["olympus5060"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.7,
 		"focalMax": 22.9,
@@ -214463,6 +214687,7 @@ var lens_profiles_default = [
 		"model": "C7000Z & compatibles (Standard)",
 		"mounts": ["olympus7000"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.9,
 		"focalMax": 39.5,
@@ -214573,6 +214798,7 @@ var lens_profiles_default = [
 		"model": "C700UZ & compatibles (Standard)",
 		"mounts": ["olympus700"],
 		"cropFactor": 6.52,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.9,
 		"focalMax": 58,
@@ -214668,6 +214894,7 @@ var lens_profiles_default = [
 		"model": "C750UZ & compatibles (Standard)",
 		"mounts": ["olympus750"],
 		"cropFactor": 6.03,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6.3,
 		"focalMax": 63,
@@ -214751,6 +214978,7 @@ var lens_profiles_default = [
 		"model": "C8080WZ & compatibles (Standard)",
 		"mounts": ["olympus8080"],
 		"cropFactor": 3.933,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.1,
 		"focalMax": 35.6,
@@ -214852,6 +215080,7 @@ var lens_profiles_default = [
 		"model": "C860L & compatibles (Standard)",
 		"mounts": ["olympusC860"],
 		"cropFactor": 6.563,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.5,
 		"focalMax": 5.5,
@@ -214879,6 +215108,7 @@ var lens_profiles_default = [
 		"model": "M.40-150mm F2.8 + MC-14",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 56,
 		"focalMax": 210,
@@ -214959,6 +215189,7 @@ var lens_profiles_default = [
 		"model": "Olympus 9mm Body Cap Lens Fisheye",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "stereographic",
 		"focalMin": 9,
 		"focalMax": 9,
@@ -215258,6 +215489,7 @@ var lens_profiles_default = [
 		"model": "OLYMPUS M.12-200mm F3.5-6.3",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 200,
@@ -216197,6 +216429,7 @@ var lens_profiles_default = [
 		"model": "OLYMPUS M.30mm F3.5 Macro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 30,
 		"focalMax": 30,
@@ -216364,6 +216597,7 @@ var lens_profiles_default = [
 		"model": "OLYMPUS M.40-150mm F2.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 40,
 		"focalMax": 150,
@@ -216945,6 +217179,7 @@ var lens_profiles_default = [
 		"model": "OLYMPUS M.8-25mm F4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8,
 		"focalMax": 25,
@@ -217067,6 +217302,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital 14-42mm f/3.5-5.6 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -217210,6 +217446,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital 17mm f/1.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 17,
 		"focalMax": 17,
@@ -217635,6 +217872,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital 17mm f/2.8 Pancake",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 17,
 		"focalMax": 17,
@@ -217669,6 +217907,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital 25mm f/1.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -218064,6 +218303,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital 45mm f/1.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 45,
 		"focalMax": 45,
@@ -218325,6 +218565,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 12-100mm f/4.0 IS Pro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 100,
@@ -219179,6 +219420,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 12-40mm f/2.8 Pro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 40,
@@ -219802,6 +220044,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 12-50mm f/3.5-6.3 EZ",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 50,
@@ -220269,6 +220512,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 12mm f/2.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 12,
@@ -220404,6 +220648,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-150mm f/4.0-5.6",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 150,
@@ -221828,6 +222073,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-150mm f/4.0-5.6 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 150,
@@ -223252,6 +223498,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-42mm f/3.5-5.6",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -223371,6 +223618,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-42mm f/3.5-5.6 EZ",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -223432,6 +223680,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-42mm f/3.5-5.6 II R",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -224076,6 +224325,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 14-42mm f/3.5-5.6 L",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 13.56,
 		"focalMax": 42,
@@ -224468,6 +224718,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 40-150mm f/4.0-5.6 R",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 40,
 		"focalMax": 150,
@@ -224674,6 +224925,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 60mm f/2.8 Macro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 60,
 		"focalMax": 60,
@@ -224905,6 +225157,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 7-14mm f/2.8 Pro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 14,
@@ -225072,6 +225325,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 75-300mm f/4.8-6.7 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 75,
 		"focalMax": 300,
@@ -225695,6 +225949,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 75mm f/1.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 75,
 		"focalMax": 75,
@@ -225866,6 +226121,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 8mm f/1.8 Fisheye Pro",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "equisolid",
 		"focalMin": 8,
 		"focalMax": 8,
@@ -225896,6 +226152,7 @@ var lens_profiles_default = [
 		"model": "Olympus M.Zuiko Digital ED 9-18mm f/4.0-5.6",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9,
 		"focalMax": 18,
@@ -226438,6 +226695,7 @@ var lens_profiles_default = [
 		"model": "OLYMPUS OM 12-45mm F4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 45,
@@ -227412,6 +227670,7 @@ var lens_profiles_default = [
 		"model": "Olympus OM-System Zuiko Auto-S 50 mm f/1.8 (Vers. S/N 5хххххх)",
 		"mounts": ["Olympus OM"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 50,
 		"focalMax": 50,
@@ -227435,6 +227694,7 @@ var lens_profiles_default = [
 		"model": "Olympus Tough TG-4 & compatibles",
 		"mounts": ["olympusToughTG4"],
 		"cropFactor": 5.56,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 18,
@@ -227559,6 +227819,7 @@ var lens_profiles_default = [
 		"model": "Olympus Tough TG-5",
 		"mounts": ["olympusToughTG5"],
 		"cropFactor": 5.62,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 18,
@@ -227685,6 +227946,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 11-22mm f/2.8-3.5",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 11,
 		"focalMax": 22,
@@ -227736,6 +227998,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 14-45mm f/3.5-5.6",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 45,
@@ -227797,6 +228060,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 14-54mm f/2.8-3.5",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 54,
@@ -227919,6 +228183,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 25mm f/2.8",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -228154,6 +228419,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 35mm f/3.5 Macro",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -228389,6 +228655,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 40-150mm f/3.5-4.5",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 40,
 		"focalMax": 150,
@@ -228430,6 +228697,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital 70-300mm F4.0-5.6",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 70,
 		"focalMax": 300,
@@ -229006,6 +229274,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 12-60mm f/2.8-4.0 SWD",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 60,
@@ -229740,6 +230009,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 14-35mm F2.0 SWD",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 35,
@@ -230426,6 +230696,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 14-42mm f/3.5-5.6",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -231549,6 +231820,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 40-150mm f/4.0-5.6",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 40,
 		"focalMax": 150,
@@ -232684,6 +232956,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 50-200mm f/2.8-3.5",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 50,
 		"focalMax": 200,
@@ -233241,6 +233514,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 50-200mm f/2.8-3.5 SWD",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 50,
 		"focalMax": 200,
@@ -233798,6 +234072,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 50-200mm f/2.8-3.5 SWD + EC-14 1.4x extender",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 70,
 		"focalMax": 283,
@@ -234314,6 +234589,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 50-200mm f/2.8-3.5 SWD + EC-20 2x extender",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 100,
 		"focalMax": 400,
@@ -234930,6 +235206,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 50mm f/2.0 Macro",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 50,
 		"focalMax": 50,
@@ -235105,6 +235382,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 7-14mm f/4.0",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 14,
@@ -235175,6 +235453,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital ED 9-18mm f/4.0-5.6",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9,
 		"focalMax": 18,
@@ -236078,6 +236357,7 @@ var lens_profiles_default = [
 		"model": "Olympus Zuiko Digital Pro ED 35-100mm F2.0",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 100,
@@ -236794,6 +237074,7 @@ var lens_profiles_default = [
 		"model": "OM 17mm F1.8 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 17,
 		"focalMax": 17,
@@ -237219,6 +237500,7 @@ var lens_profiles_default = [
 		"model": "Stylus 1 & compatibles",
 		"mounts": ["olympusStylus1"],
 		"cropFactor": 4.67,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 64.3,
@@ -237426,6 +237708,7 @@ var lens_profiles_default = [
 		"model": "Stylus Epic & compatibles (Standard)",
 		"mounts": ["olympusEpic"],
 		"cropFactor": 1,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 35,
@@ -237456,6 +237739,7 @@ var lens_profiles_default = [
 		"model": "Stylus V & compatibles (Standard)",
 		"mounts": ["olympusStylusV"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.95,
 		"focalMax": 11.52,
@@ -237506,6 +237790,7 @@ var lens_profiles_default = [
 		"model": "XZ-1 & compatibles (Standard)",
 		"mounts": ["olympusxz1"],
 		"cropFactor": 4.68,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 24,
@@ -238318,6 +238603,7 @@ var lens_profiles_default = [
 		"model": "OM 12-100mm F4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 100,
@@ -239172,6 +239458,7 @@ var lens_profiles_default = [
 		"model": "OM 12-45mm F4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 45,
@@ -241095,6 +241382,7 @@ var lens_profiles_default = [
 		"model": "DMC-FZ45 & compatibles (Standard)",
 		"mounts": ["panasonicDMCFZ45"],
 		"cropFactor": 5.81,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 108,
@@ -241285,6 +241573,7 @@ var lens_profiles_default = [
 		"model": "DMC-LF1 & compatibles",
 		"mounts": ["panasonicLF1"],
 		"cropFactor": 4.67,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 6,
 		"focalMax": 42.8,
@@ -241497,6 +241786,7 @@ var lens_profiles_default = [
 		"model": "Leica D Vario-Elmar 14-150mm f/3.5-5.6 Asph. OIS",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 150,
@@ -241783,6 +242073,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG 100-400/F4.0-6.3",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 100,
 		"focalMax": 400,
@@ -243132,6 +243423,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG 12-60/F2.8-4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 60,
@@ -244138,6 +244430,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG 50-200/F2.8-4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 50,
 		"focalMax": 200,
@@ -244260,6 +244553,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG 8-18/F2.8-4.0",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8,
 		"focalMax": 18,
@@ -244508,6 +244802,7 @@ var lens_profiles_default = [
 		"model": "Leica DG Macro-Elmarit 45mm f/2.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 45,
 		"focalMax": 45,
@@ -244538,6 +244833,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG NOCTICRON 42.5/F1.2",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 43,
 		"focalMax": 43,
@@ -244704,6 +245000,7 @@ var lens_profiles_default = [
 		"model": "Leica DG Summilux 15mm f/1.7 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 15,
 		"focalMax": 15,
@@ -244959,6 +245256,7 @@ var lens_profiles_default = [
 		"model": "Leica DG Summilux 25mm f/1.4 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -245134,6 +245432,7 @@ var lens_profiles_default = [
 		"model": "Leica DG Summilux 25mm f/1.4 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -245309,6 +245608,7 @@ var lens_profiles_default = [
 		"model": "LEICA DG SUMMILUX 9/F1.7",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 9,
 		"focalMax": 9,
@@ -245343,6 +245643,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 14mm f/2.5 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 14,
@@ -245578,6 +245879,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 14mm f/2.5 Asph. + GWC1 0.79x",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 14,
@@ -245813,6 +246115,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 14mm f/2.5 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 14,
@@ -246008,6 +246311,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 20mm f/1.7 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 20,
 		"focalMax": 20,
@@ -246243,6 +246547,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 20mm f/1.7 II Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 20,
 		"focalMax": 20,
@@ -246598,6 +246903,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 25mm f/1.7 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -246813,6 +247119,7 @@ var lens_profiles_default = [
 		"model": "Lumix G 42.5mm f/1.7",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 43,
 		"focalMax": 43,
@@ -246847,6 +247154,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Macro 30mm f/2.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 30,
 		"focalMax": 30,
@@ -246982,6 +247290,7 @@ var lens_profiles_default = [
 		"model": "LUMIX G VARIO 100-300/F4.0-5.6II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 100,
 		"focalMax": 300,
@@ -248105,6 +248414,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 100-300mm f/4.0-5.6 Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 100,
 		"focalMax": 300,
@@ -249228,6 +249538,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 32,
@@ -249830,6 +250141,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 12-60mm f/3.5-5.6 Asph. Power OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 60,
@@ -249952,6 +250264,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 14-140mm f/3.5-5.6",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 140,
@@ -250754,6 +251067,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 14-140mm f/3.5-5.6 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 140,
@@ -251556,6 +251870,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 14-42mm f/3.5-5.6 II Asph. Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -252315,6 +252630,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 14-45mm f/3.5-5.6 Asph. Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 45,
@@ -253436,6 +253752,7 @@ var lens_profiles_default = [
 		"model": "LUMIX G VARIO 35-100/F2.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 100,
@@ -253482,6 +253799,7 @@ var lens_profiles_default = [
 		"model": "LUMIX G VARIO 35-100/F2.8II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 100,
@@ -253528,6 +253846,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 35-100mm f/4.0-5.6 Asph. Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 35,
 		"focalMax": 100,
@@ -255221,6 +255540,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 45-200mm f/4.0-5.6 II",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 45,
 		"focalMax": 200,
@@ -256210,6 +256530,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 45-200mm f/4.0-5.6 Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 45,
 		"focalMax": 200,
@@ -257199,6 +257520,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario 7-14mm f/4.0 Asph.",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7,
 		"focalMax": 14,
@@ -257321,6 +257643,7 @@ var lens_profiles_default = [
 		"model": "Lumix G Vario HD 14-140mm f/4.0-5.8 Asph. Mega OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 140,
@@ -259147,6 +259470,7 @@ var lens_profiles_default = [
 		"model": "Lumix G X Vario 12-35mm f/2.8 Asph. Power OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 35,
@@ -259395,6 +259719,7 @@ var lens_profiles_default = [
 		"model": "Lumix G X Vario 12-35mm f/2.8 II Asph. Power OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 12,
 		"focalMax": 35,
@@ -259643,6 +259968,7 @@ var lens_profiles_default = [
 		"model": "Lumix G X Vario PZ 14-42mm f/3.5-5.6 Asph. Power OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -260766,6 +261092,7 @@ var lens_profiles_default = [
 		"model": "Lumix G X Vario PZ 14-42mm f/3.5-5.6 Asph. Power OIS + GWC1 0.79x",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 42,
@@ -261889,6 +262216,7 @@ var lens_profiles_default = [
 		"model": "Lumix G X Vario PZ 45-175mm f/4.0-5.6 Asph. Power OIS",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 45,
 		"focalMax": 175,
@@ -266393,6 +266721,7 @@ var lens_profiles_default = [
 		"model": "01 Standard Prime 8.5mm f/1.9 AL [IF]",
 		"mounts": ["Pentax Q"],
 		"cropFactor": 5.53,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8.5,
 		"focalMax": 8.5,
@@ -269626,6 +269955,7 @@ var lens_profiles_default = [
 		"model": "Pentax Optio 230GS & compatibles (Standard)",
 		"mounts": ["pentax230"],
 		"cropFactor": 6.563,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -269723,6 +270053,7 @@ var lens_profiles_default = [
 		"model": "Pentax Optio 430 & compatibles (Standard)",
 		"mounts": ["pentax430"],
 		"cropFactor": 4.85,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.6,
 		"focalMax": 22.8,
@@ -269806,6 +270137,7 @@ var lens_profiles_default = [
 		"model": "Pentax Optio 43WR & compatibles (Standard)",
 		"mounts": ["pentax43WR"],
 		"cropFactor": 6.5,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.7,
 		"focalMax": 16,
@@ -269889,6 +270221,7 @@ var lens_profiles_default = [
 		"model": "Pentax Optio 750Z & compatibles (Standard)",
 		"mounts": ["pentax750"],
 		"cropFactor": 4.843,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.8,
 		"focalMax": 39,
@@ -284088,6 +284421,7 @@ var lens_profiles_default = [
 		"model": "Pergear 7.5mm f/2.8",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 7.5,
 		"focalMax": 7.5,
@@ -284246,6 +284580,7 @@ var lens_profiles_default = [
 		"model": "Caplio GX & compatibles (Standard)",
 		"mounts": ["ricohGX"],
 		"cropFactor": 4.9,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -284341,6 +284676,7 @@ var lens_profiles_default = [
 		"model": "Caplio GX & compatibles, with DW-4",
 		"mounts": ["ricohGX"],
 		"cropFactor": 4.9,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.8,
 		"focalMax": 17.4,
@@ -284436,6 +284772,7 @@ var lens_profiles_default = [
 		"model": "Caplio RR30 & compatibles (Standard)",
 		"mounts": ["ricohRR30"],
 		"cropFactor": 6.4,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.7,
 		"focalMax": 16.3,
@@ -284491,6 +284828,7 @@ var lens_profiles_default = [
 		"model": "GR Digital & compatibles (Standard)",
 		"mounts": ["ricohGRdigital"],
 		"cropFactor": 4.8,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.9,
 		"focalMax": 5.9,
@@ -284678,6 +285016,7 @@ var lens_profiles_default = [
 		"model": "Ricoh GR & compatibles",
 		"mounts": ["ricohGR"],
 		"cropFactor": 1.523,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 18.3,
 		"focalMax": 18.3,
@@ -285853,6 +286192,7 @@ var lens_profiles_default = [
 		"model": "EX2F & compatibles (Standard)",
 		"mounts": ["samsungEx2f"],
 		"cropFactor": 4.6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 5.2,
 		"focalMax": 17.3,
@@ -286020,6 +286360,7 @@ var lens_profiles_default = [
 		"model": "Samsung Galaxy S21 ultrawide",
 		"mounts": ["samsungS21uw"],
 		"cropFactor": 6,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 2.2,
 		"focalMax": 2.2,
@@ -286815,6 +287156,7 @@ var lens_profiles_default = [
 		"model": "Samsung S7 wide angle lens cover",
 		"mounts": ["samsungS7"],
 		"cropFactor": 6.19,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.2,
 		"focalMax": 4.2,
@@ -286853,6 +287195,7 @@ var lens_profiles_default = [
 		"model": "Samsung S8 wide angle lens",
 		"mounts": ["samsungS8wide"],
 		"cropFactor": 6.047,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 4.3,
@@ -286891,6 +287234,7 @@ var lens_profiles_default = [
 		"model": "SM-G950F",
 		"mounts": ["samsungS8"],
 		"cropFactor": 6.19,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.2,
 		"focalMax": 4.2,
@@ -286921,6 +287265,7 @@ var lens_profiles_default = [
 		"model": "WB2000 & compatibles (Standard)",
 		"mounts": ["samsungWB2000"],
 		"cropFactor": 5.69,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 24,
 		"focalMax": 120,
@@ -288889,6 +289234,7 @@ var lens_profiles_default = [
 		"model": "Samyang 7.5mm f/3.5 UMC Fish-eye MFT",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "fisheye",
 		"focalMin": 7.5,
 		"focalMax": 7.5,
@@ -291109,6 +291455,7 @@ var lens_profiles_default = [
 		"model": "Schneider 28mm Digitar f/2.8",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .577,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 28,
 		"focalMax": 28,
@@ -291132,6 +291479,7 @@ var lens_profiles_default = [
 		"model": "Schneider 80mm Xenotar f/2.8",
 		"mounts": ["Rollei 6x6"],
 		"cropFactor": .51,
+		"aspectRatio": 1,
 		"type": "rectilinear",
 		"focalMin": 80,
 		"focalMax": 80,
@@ -291151,6 +291499,7 @@ var lens_profiles_default = [
 		"model": "Schneider LS 110mm f/2.8",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 110,
 		"focalMax": 110,
@@ -291466,6 +291815,7 @@ var lens_profiles_default = [
 		"model": "Schneider LS 55mm f/2.8",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 55,
 		"focalMax": 55,
@@ -291781,6 +292131,7 @@ var lens_profiles_default = [
 		"model": "Schneider LS 80mm f/2.8",
 		"mounts": ["Mamiya 645"],
 		"cropFactor": .644,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 80,
 		"focalMax": 80,
@@ -310691,6 +311042,7 @@ var lens_profiles_default = [
 		"model": "Sigma 150mm f/2.8 EX DG APO HSM Macro",
 		"mounts": ["4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 150,
 		"focalMax": 150,
@@ -311921,6 +312273,7 @@ var lens_profiles_default = [
 		"model": "Sigma 16mm f/1.4 DC DN | Contemporary C 017",
 		"mounts": ["Micro 4/3 System", "Sony E"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 16,
 		"focalMax": 16,
@@ -320887,6 +321240,7 @@ var lens_profiles_default = [
 		"model": "Sigma 19mm f/2.8 DN",
 		"mounts": ["Micro 4/3 System", "Sony E"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 19,
 		"focalMax": 19,
@@ -321098,6 +321452,7 @@ var lens_profiles_default = [
 		"model": "Sigma 19mm f/2.8 EX DN",
 		"mounts": ["Sony E", "Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 19,
 		"focalMax": 19,
@@ -327387,6 +327742,7 @@ var lens_profiles_default = [
 		"model": "Sigma 30mm f/2.8 EX DN",
 		"mounts": ["Sony E", "Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 30,
 		"focalMax": 30,
@@ -333682,6 +334038,7 @@ var lens_profiles_default = [
 		"model": "Sigma 60mm f/2.8 DN",
 		"mounts": ["Sony E", "Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 60,
 		"focalMax": 60,
@@ -339364,6 +339721,7 @@ var lens_profiles_default = [
 		"model": "Sigma DP2 & compatibles (Standard)",
 		"mounts": ["sigmaDP2"],
 		"cropFactor": 1.739,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 24.2,
 		"focalMax": 24.2,
@@ -339401,6 +339759,7 @@ var lens_profiles_default = [
 		"model": "SLR Magic 8mm f/4",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 8,
 		"focalMax": 8,
@@ -339858,6 +340217,7 @@ var lens_profiles_default = [
 		"model": "DSC-HX300 & compatibles (Standard)",
 		"mounts": ["sonyHX300"],
 		"cropFactor": 5.58,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 215,
@@ -339926,6 +340286,7 @@ var lens_profiles_default = [
 		"model": "DSC-RX100 & compatibles (Standard)",
 		"mounts": ["sonyRX100"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 10.4,
 		"focalMax": 37.1,
@@ -341799,6 +342160,7 @@ var lens_profiles_default = [
 		"model": "DSC-RX100 II & compatibles",
 		"mounts": ["sonyRX100II"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 10.4,
 		"focalMax": 37.1,
@@ -342955,6 +343317,7 @@ var lens_profiles_default = [
 		"model": "DSC-RX100 III & compatibles",
 		"mounts": ["sonyRX100III"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 25.7,
@@ -375519,6 +375882,7 @@ var lens_profiles_default = [
 		"model": "Sony RX10 & compatibles",
 		"mounts": ["sonyRX10"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 73.3,
@@ -376596,6 +376960,7 @@ var lens_profiles_default = [
 		"model": "Sony RX10II & compatibles",
 		"mounts": ["sonyRX10II"],
 		"cropFactor": 2.73,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 8.8,
 		"focalMax": 73.2,
@@ -376977,6 +377342,7 @@ var lens_profiles_default = [
 		"model": "Sony Xperia Z3 & compatibles",
 		"mounts": ["sonyXperiaZ3"],
 		"cropFactor": 7.87,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.9,
 		"focalMax": 4.9,
@@ -377173,6 +377539,7 @@ var lens_profiles_default = [
 		"model": "ZV-1 & compatibles",
 		"mounts": ["sonyZV1"],
 		"cropFactor": 2.7,
+		"aspectRatio": 1.5,
 		"type": "rectilinear",
 		"focalMin": 9.4,
 		"focalMax": 25.7,
@@ -377358,6 +377725,7 @@ var lens_profiles_default = [
 		"model": "Sun Wide YS-28 28mm f/2.8",
 		"mounts": ["Olympus OM", "T2"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 28,
 		"focalMax": 28,
@@ -377510,6 +377878,7 @@ var lens_profiles_default = [
 		"model": "14-150mm F/3.5-5.8 DiIII C001:",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 14,
 		"focalMax": 150,
@@ -379509,6 +379878,7 @@ var lens_profiles_default = [
 		"model": "E 17-70mm F2.8 B070",
 		"mounts": ["Sony E"],
 		"cropFactor": 1.534,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 17,
 		"focalMax": 70,
@@ -384646,6 +385016,7 @@ var lens_profiles_default = [
 		"model": "Tamron 200mm f/3.5 CT-200 BBAR",
 		"mounts": ["Tamron Adaptall"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 200,
 		"focalMax": 200,
@@ -411293,6 +411664,7 @@ var lens_profiles_default = [
 		"model": "Tosner MC 28mm f/2.8",
 		"mounts": ["M42"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 28,
 		"focalMax": 28,
@@ -411895,6 +412267,7 @@ var lens_profiles_default = [
 		"model": "TTArtisan 7.5mm f/2 Fisheye",
 		"mounts": ["Micro 4/3 System"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "fisheye",
 		"focalMin": 7.5,
 		"focalMax": 7.5,
@@ -418141,6 +418514,7 @@ var lens_profiles_default = [
 		"model": "Yongnuo 25mm f/1.7 II",
 		"mounts": ["Micro 4/3"],
 		"cropFactor": 2,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 25,
 		"focalMax": 25,
@@ -419647,6 +420021,7 @@ var lens_profiles_default = [
 		"model": "Lumia 1020",
 		"mounts": ["lumia1020"],
 		"cropFactor": 3.93,
+		"aspectRatio": 1.7777777777777777,
 		"type": "rectilinear",
 		"focalMin": 6.6,
 		"focalMax": 6.6,
@@ -419685,6 +420060,7 @@ var lens_profiles_default = [
 		"model": "Lumia 950",
 		"mounts": ["lumia950"],
 		"cropFactor": 6.02,
+		"aspectRatio": 1.3333333333333333,
 		"type": "rectilinear",
 		"focalMin": 4.3,
 		"focalMax": 4.3,
@@ -419761,6 +420137,7 @@ var lens_profiles_default = [
 		"model": "Standard",
 		"mounts": ["lumia1520"],
 		"cropFactor": 6.26,
+		"aspectRatio": 1.7777777777777777,
 		"type": "rectilinear",
 		"focalMin": 4.5,
 		"focalMax": 4.5,
@@ -421334,6 +421711,20 @@ function lerpArray(a, b, t) {
 }
 
 //#endregion
+//#region src/db/radius-scale.ts
+/** The factor taking the shader's half-diagonal radius to the Hugin radius the
+*  lens's distortion and TCA coefficients were fitted in. */
+function huginRadiusScale(lens, shot) {
+	const shotAspect = Math.max(shot.aspect, 1 / shot.aspect);
+	const calibrationAspect = lens.aspectRatio ?? shotAspect;
+	return Math.hypot(calibrationAspect, 1) * (lens.cropFactor / shotCropFactor(lens, shot));
+}
+function shotCropFactor(lens, shot) {
+	const { focalLength = 0, focalLength35mm = 0 } = shot;
+	return focalLength > 0 && focalLength35mm > 0 ? focalLength35mm / focalLength : lens.cropFactor;
+}
+
+//#endregion
 //#region src/db/matcher.ts
 /** Find the best matching Lensfun lens for the given EXIF, or null. A body with
 *  a built-in lens can only be wearing that lens, so the camera decides first. */
@@ -421399,19 +421790,28 @@ function matchByLensName(exif, db) {
 	}
 	return best && best.score >= .6 ? best.lens : null;
 }
-/** Resolve a full profile for a photo from its EXIF + the database. */
-function resolveForPhoto(exif, db) {
+/** Resolve a full profile for a photo from its EXIF + the database. `aspect` is
+*  the photo's width/height. */
+function resolveForPhoto(exif, db, aspect) {
 	const lens = matchLens(exif, db);
 	if (!lens) return null;
 	return {
 		lens,
-		profile: resolveForLens(lens, exif)
+		profile: resolveForLens(lens, exif, aspect)
 	};
 }
 /** Resolve a profile for an explicitly chosen lens (manual picker / remembered
-*  choice), interpolated to this shot's focal/aperture/distance. */
-function resolveForLens(lens, exif) {
-	return resolveProfile$1(lens, exif.focalLength ?? lens.focalMin, exif.aperture ?? lens.apertureMin, exif.subjectDistance ?? 1e3);
+*  choice), interpolated to this shot's focal/aperture/distance and scaled to
+*  its frame (`aspect` is the photo's width/height). */
+function resolveForLens(lens, exif, aspect) {
+	return {
+		...resolveProfile$1(lens, exif.focalLength ?? lens.focalMin, exif.aperture ?? lens.apertureMin, exif.subjectDistance ?? 1e3),
+		radiusScale: huginRadiusScale(lens, {
+			aspect,
+			focalLength: exif.focalLength,
+			focalLength35mm: exif.focalLength35mm
+		})
+	};
 }
 /** The key a manual lens pick is remembered under. A body with a built-in lens
 *  is keyed by the body, since its EXIF lens string is often generic
@@ -421514,12 +421914,36 @@ async function idbHas(store, key) {
 
 //#endregion
 //#region src/features/embedded.ts
+const CACHE_VERSION = 2;
+function toEmbeddedCache(profile) {
+	return {
+		version: CACHE_VERSION,
+		profile
+	};
+}
+/** A cached profile, or null if the entry is unreadable. Entries cached before
+*  the version field hold the profile itself, with poly5 distortion stored as
+*  [k2, k1]. The import hook never rewrites a cached photo, so they are
+*  reordered on read. */
+function fromEmbeddedCache(raw) {
+	if (!raw || typeof raw !== "object") return null;
+	if ("version" in raw) return raw.version === CACHE_VERSION ? raw.profile : null;
+	const legacy = raw;
+	const d = legacy.distortion;
+	if (d?.model !== "poly5") return legacy;
+	return {
+		...legacy,
+		distortion: {
+			model: "poly5",
+			k: [d.k[1] ?? 0, d.k[0] ?? 0]
+		}
+	};
+}
 async function resolveEmbedded(_api, photoId) {
 	if (!photoId) return null;
-	const obj = await idbGet("embedded", photoId);
-	if (!obj || typeof obj !== "object") return null;
-	return {
-		...obj,
+	const profile = fromEmbeddedCache(await idbGet("embedded", photoId));
+	return profile && {
+		...profile,
 		source: "embedded"
 	};
 }
@@ -421533,10 +421957,9 @@ function radiusS(focalLengthX, aspect) {
 }
 function convertDistortion(d, s) {
 	if (!d) return null;
-	const a = d.k1 * s * s;
 	return {
 		model: "poly5",
-		k: [d.k2 * s * s * s * s, a]
+		k: [d.k1 * s * s, d.k2 * s * s * s * s]
 	};
 }
 function convertVignette(v, s) {
@@ -421936,6 +422359,11 @@ const distortionStage = {
 			default: 0
 		},
 		{
+			key: "distRScale",
+			glslType: "float",
+			default: 1
+		},
+		{
 			key: "distManual",
 			glslType: "float",
 			default: 0
@@ -421952,23 +422380,21 @@ const distortionStage = {
     float halfDiag = 0.5 * sqrt(uImageAspect * uImageAspect + 1.0);
     float rr = length(phys) / halfDiag;
     float rr2 = rr * rr;
+    float rp = rr * distRScale;
+    float rp2 = rp * rp;
     float scl = 1.0;
     if (distModel == 1) {
-      scl = 1.0 - distKB + distKB * rr2;
+      scl = 1.0 - distKA + distKA * rp2;
     } else if (distModel == 2) {
-      scl = 1.0 + distKB * rr2 + distKA * rr2 * rr2;
+      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2;
     } else if (distModel == 3) {
-      scl = distKA * rr2 * rr + distKB * rr2 + distKC * rr
+      scl = distKA * rp2 * rp + distKB * rp2 + distKC * rp
           + (1.0 - distKA - distKB - distKC);
     }
     if (abs(distManual) > 0.001) {
       scl += distManual * 0.0003 * rr2;
     }
-    vec2 res = 0.5 + cen * scl;
-    if (cropScale > 1.001) {
-      res = 0.5 + (res - 0.5) / cropScale;
-    }
-    srcUv = res;
+    srcUv = 0.5 + cen * (scl / cropScale);
   `
 };
 const caStage = {
@@ -422022,6 +422448,11 @@ const caStage = {
 				default: 0
 			},
 			{
+				key: "tcaRScale",
+				glslType: "float",
+				default: 1
+			},
+			{
 				key: "caManual",
 				glslType: "float",
 				default: 0
@@ -422044,8 +422475,9 @@ const caStage = {
           sclR = tcaKR;
           sclB = tcaKB;
         } else if (tcaModel == 2) {
-          sclR = tcaBR * rr2 + tcaCR * rr + tcaKR;
-          sclB = tcaBB * rr2 + tcaCB * rr + tcaKB;
+          float rt = rr * tcaRScale;
+          sclR = tcaBR * rt * rt + tcaCR * rt + tcaKR;
+          sclB = tcaBB * rt * rt + tcaCB * rt + tcaKB;
         }
         if (caManual > 0.001) {
           float ofs = caManual / 100.0 * 0.008 * rr2 * 4.0;
@@ -422251,13 +422683,13 @@ async function resolveProfile(state, exif, photoId, aspect) {
 	const db = getCachedLensDb() ?? await loadLensDb();
 	if (state.lensId) {
 		const lens = findLensById(state.lensId);
-		if (lens) return resolveForLens(lens, exif);
+		if (lens) return resolveForLens(lens, exif, aspect);
 	}
 	if (state.pref === "auto" || state.pref === "lensfun") {
 		const remembered = rememberedLensIdFor(exif);
 		if (remembered) {
 			const lens = findLensById(remembered);
-			if (lens) return resolveForLens(lens, exif);
+			if (lens) return resolveForLens(lens, exif, aspect);
 		}
 	}
 	const order = state.pref === "lensfun" ? ["lensfun"] : state.pref === "embedded" ? ["embedded", "lensfun"] : state.pref === "lcp" ? ["lcp", "lensfun"] : [
@@ -422272,7 +422704,7 @@ async function resolveProfile(state, exif, photoId, aspect) {
 		const l = await resolveLcp(api, exif, aspect);
 		if (l) return l;
 	} else if (src === "lensfun") {
-		const res = resolveForPhoto(exif, db);
+		const res = resolveForPhoto(exif, db, aspect);
 		if (res) return res.profile;
 	}
 	return null;
@@ -422284,7 +422716,7 @@ async function recompute() {
 	const photo = currentPhoto();
 	const exif = photo?.exif ?? {};
 	const aspect = photoAspect$1(photo);
-	const key = `${photoId}|${state.mode}|${state.pref}|${state.lensId}`;
+	const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}`;
 	let profile;
 	if (key === cacheKey) profile = cacheProfile;
 	else {
@@ -423016,7 +423448,7 @@ function fitDistortion(t) {
 	const c = fitPowers(pts.radii, pts.values.map((p) => p / 100), DISTORTION_POWERS);
 	return c && {
 		model: "poly5",
-		k: [c[1], c[0]]
+		k: c
 	};
 }
 const VIGNETTING_POWERS = [
@@ -423221,7 +423653,7 @@ function embeddedCatalogHook(api) {
 			if (!raf && !/\.dng$/i.test(ctx.fileName)) return;
 			if (await idbHas("embedded", ctx.photo.id)) return;
 			const resolved = raf ? await readRafProfile(ctx.dir, ctx.fileName, ctx.photo) : await readDngProfile(ctx.dir, ctx.fileName, ctx.photo);
-			if (resolved) await idbSet("embedded", ctx.photo.id, resolved);
+			if (resolved) await idbSet("embedded", ctx.photo.id, toEmbeddedCache(resolved));
 		}
 	};
 }
