@@ -14,8 +14,9 @@ when you want it.
   distance of each shot.
 - **Embedded RAW corrections** — reads the camera maker's own correction data baked into the
   file, so many lenses correct perfectly even when no Lensfun profile exists. Today this covers
-  **DNG** files (the standardized DNG OpcodeList3: distortion + vignetting); maker-note decoding
-  for proprietary RAWs (Sony ARW, Fujifilm RAF, Panasonic RW2, Micro-4/3) is in progress.
+  **DNG** files (the standardized DNG OpcodeList3: distortion + vignetting) and **Fujifilm RAF**
+  files (distortion, vignetting, and lateral chromatic aberration); maker-note decoding for other
+  proprietary RAWs (Sony ARW, Panasonic RW2, Micro-4/3) is in progress.
 - **Adobe Lens Profile (`.lcp`) import** — bring your existing Lightroom / Camera Raw lens
   profiles.
 - **Auto chromatic aberration** — estimates and removes lateral CA directly from the image, no
