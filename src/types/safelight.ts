@@ -71,6 +71,16 @@ export interface InterStageVariable {
   producer?: string;
 }
 
+/** The values a processing stage receives and hands back. */
+export interface StageSpace {
+  /** "linear": proportional to light. "perceptual": the sRGB curve extended both
+   *  ways (sign kept, no ceiling), so display-style maths still sees what lies
+   *  beyond [0, 1]. */
+  encoding: "linear" | "perceptual";
+  /** Default "rec709", the core's working primaries. */
+  primaries?: "rec709" | "rec2020";
+}
+
 export interface ProcessingStageContribution {
   id: string;
   name: string;
@@ -84,6 +94,10 @@ export interface ProcessingStageContribution {
   consumes?: string[];
   after?: string[];
   mask?: { maskable: true; maskPhase: "linear" | "display" };
+  /** Opt into full-information values. Omitted, a display-domain stage is handed
+   *  `c` clipped to [0, 1] on process version 2, the clip written ahead of its
+   *  block and outside its own gate. Hosts before process versions ignore it. */
+  space?: StageSpace;
 }
 
 // ─── UI / lifecycle contributions ───────────────────────────────────────────

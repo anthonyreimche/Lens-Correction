@@ -160,12 +160,15 @@ export const vignetteStage: ProcessingStageContribution = {
 
 // ─── Defringe (effects) ─────────────────────────────────────────────────────
 // Phase-2 parity: amount-driven purple/green fringe desaturation, matching core
-// applyDefringe(). Phase 3 extends this with the hue-picker uniforms.
+// applyDefringe(). Phase 3 extends this with the hue-picker uniforms. The stage
+// is always registered, so it declares the display's own space (the host adds
+// no clip) and clips its input to [0, 1] only inside its amount gate.
 
 export const defringeStage: ProcessingStageContribution = {
   id: STAGE.defringe,
   name: "Lens Defringe",
   phase: "effects",
+  space: { encoding: "perceptual" },
   uniforms: [
     { key: "dfAmount", glslType: "float", default: 0 },
     { key: "dfPurpleHue", glslType: "float", default: 0 }, // 0 = off (use default purple detection)
@@ -174,6 +177,7 @@ export const defringeStage: ProcessingStageContribution = {
   ],
   glsl: `
     if (dfAmount >= 0.001) {
+      c = clamp(c, 0.0, 1.0);
       float lm = luma(c);
       float chroma = length(c - vec3(lm));
       float purpleish = max(0.0, c.b - c.r) + max(0.0, c.b - c.g);

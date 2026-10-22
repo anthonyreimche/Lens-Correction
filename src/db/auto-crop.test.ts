@@ -38,6 +38,7 @@ function maxReach(u: DistortionUniforms, cropScale: number, aspect: number): num
 }
 
 const GFX_ASPECT = 11648 / 8736;
+const Z50_ASPECT = 5568 / 3712;
 
 describe("computeAutoCropScale", () => {
   it("is 1 without distortion", () => {
@@ -59,6 +60,14 @@ describe("computeAutoCropScale", () => {
     const midpoint = distortionScale(u, shaderRadius(0, 0.5, GFX_ASPECT));
     expect(midpoint).toBeCloseTo(1.025, 3);
     expect(computeAutoCropScale(u, GFX_ASPECT)).toBeCloseTo(midpoint, 6);
+  });
+
+  it("leaves no border on a Z50 with the NIKKOR Z DX 16-50 at any calibrated focal length", () => {
+    const lens = findLensById("nikon-nikkor-z-dx-16-50mm-f-3-5-6-3-vr")!;
+    for (const { focal } of lens.distortion) {
+      const u = distortionUniforms(resolveForLens(lens, { focalLength: focal, focalLength35mm: focal * 1.5 }, Z50_ASPECT), 0);
+      expect(maxReach(u, computeAutoCropScale(u, Z50_ASPECT), Z50_ASPECT), `${focal} mm`).toBeLessThan(1 + 1e-7);
+    }
   });
 
   it("is 1 for barrel correction", () => {

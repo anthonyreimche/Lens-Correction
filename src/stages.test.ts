@@ -39,3 +39,21 @@ describe("stage uniform keys", () => {
     }
   });
 });
+
+// On process version 2 the host clips a display stage that declares no space to
+// [0, 1] ahead of its block, outside its own gate, for as long as it is
+// registered. Defringe is always registered, so it clips only inside its gate.
+describe("display-phase stages", () => {
+  const DISPLAY_PHASES = new Set(["display-adjust", "effects", "output-encode"]);
+
+  it("every display-phase stage declares the display's own space", () => {
+    for (const stage of stages.filter((s) => DISPLAY_PHASES.has(s.phase))) {
+      expect(stage.space, stage.id).toEqual({ encoding: "perceptual" });
+    }
+  });
+
+  it("defringe clips its input only inside its amount gate", () => {
+    const glsl = defringeStage.glsl.replace(/\s+/g, " ").trim();
+    expect(glsl.startsWith("if (dfAmount >= 0.001) { c = clamp(c, 0.0, 1.0);")).toBe(true);
+  });
+});

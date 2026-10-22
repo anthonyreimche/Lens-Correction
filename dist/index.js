@@ -422552,6 +422552,7 @@ const defringeStage = {
 	id: STAGE.defringe,
 	name: "Lens Defringe",
 	phase: "effects",
+	space: { encoding: "perceptual" },
 	uniforms: [
 		{
 			key: "dfAmount",
@@ -422576,6 +422577,7 @@ const defringeStage = {
 	],
 	glsl: `
     if (dfAmount >= 0.001) {
+      c = clamp(c, 0.0, 1.0);
       float lm = luma(c);
       float chroma = length(c - vec3(lm));
       float purpleish = max(0.0, c.b - c.r) + max(0.0, c.b - c.g);
