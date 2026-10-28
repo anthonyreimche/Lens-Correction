@@ -7,6 +7,7 @@ import type { SafelightAPI } from "./types/safelight";
 import { EXT_ID } from "./params";
 import { initController, disposeController, recompute } from "./controller";
 import { createLensPanel } from "./ui/panel";
+import { createLensMaskPanel, MASK_KEYS } from "./ui/mask-panel";
 import { embeddedCatalogHook } from "./features/parse-embedded";
 import { lcpPresetImporter } from "./features/parse-lcp";
 
@@ -43,6 +44,8 @@ export function activate(api: SafelightAPI): void {
     slot: "develop-right",
     order: 120,
     defaultDock: { module: "develop", direction: "right", order: 9, width: 280 },
+    // A mask's own vignetting and defringe, in the Masking panel's Adjust tab.
+    mask: { component: createLensMaskPanel(api), owns: MASK_KEYS },
   });
 
   // Embedded RAW corrections: parse on import, cache a per-photo sidecar.

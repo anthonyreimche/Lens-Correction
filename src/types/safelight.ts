@@ -93,7 +93,10 @@ export interface ProcessingStageContribution {
   produces?: InterStageVariable[];
   consumes?: string[];
   after?: string[];
-  mask?: { maskable: true; maskPhase: "linear" | "display" };
+  /** Runs the stage again inside each mask whose bag holds its keys, with that
+   *  mask's values, blended by its coverage (Safelight 3.1.0, process version 2
+   *  photos, scene-linear through output-encode phases). */
+  mask?: { maskable: true };
   /** Opt into full-information values. Omitted, a display-domain stage is handed
    *  `c` clipped to [0, 1] on process version 2, the clip written ahead of its
    *  block and outside its own gate. Hosts before process versions ignore it. */
@@ -119,6 +122,21 @@ export interface PanelContribution {
   defaultDock?: PanelDockDefault;
   onReset?: () => void;
   headerAccessory?: any;
+  /** Offers a panel in a mask's Adjust tab: each mask that adds it renders
+   *  `component`, which edits that mask's values through useParamScope. `owns`
+   *  lists every qualified key it writes, seeded on add and cleared on remove. */
+  mask?: { component: any; order?: number; owns: readonly string[] };
+}
+
+/** The params a panel edits: the photo's bag, or one mask's (maskId set).
+ *  Reads see the store as it is now, not as the render was handed it. */
+export interface ParamScope {
+  maskId: string | null;
+  getParam(key: string): unknown;
+  /** The stored values by qualified key, without defaults. */
+  getParams(): Readonly<Record<string, unknown>>;
+  setParams(patch: Record<string, unknown>): void;
+  commit(label: string): void;
 }
 
 export type SettingsField =
@@ -246,6 +264,8 @@ export interface SafelightAPI {
     setCanvasCursor(cursor: string | CursorContribution | null, opts?: { priority?: number }): () => void;
     putPhotoData(key: string, data: Uint8Array | null): void;
     getPhotoData(key: string): Promise<Uint8Array | null>;
+    /** The mask's scope inside a mask's Adjust tab, the photo's anywhere else. */
+    useParamScope(): ParamScope;
     [key: string]: any;
   };
   preferences: { open(sectionId?: string): void; close(): void; toggle(): void };

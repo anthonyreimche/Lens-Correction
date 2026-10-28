@@ -1,7 +1,7 @@
 {
   "id": "com.safelight.lens-correction",
   "name": "Lens Correction",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Profile, manual, and automatic lens correction — distortion, chromatic aberration, vignetting, and defringe. Powered by the Lensfun database, Adobe LCP profiles, embedded RAW correction metadata, and image-based auto CA.",
   "author": "Anthony Reimche",
   "main": "dist/index.js",
@@ -18,5 +18,5 @@
   "license": "MIT",
   "homepage": "https://github.com/anthonyreimche/Lensfun-Lens-Correction",
   "repository": "anthonyreimche/Lens-Correction",
-  "minAppVersion": "2.4.3"
+  "minAppVersion": "3.1.0"
 }

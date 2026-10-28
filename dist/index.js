@@ -422546,7 +422546,8 @@ const vignetteStage = {
       fac *= mn;
     }
     lin *= clamp(fac, 0.0, 4.0);
-  `
+  `,
+	mask: { maskable: true }
 };
 const defringeStage = {
 	id: STAGE.defringe,
@@ -422607,7 +422608,8 @@ const defringeStage = {
       float suppress = clamp(dfAmount / 100.0 * fringeMag * (chroma * 8.0), 0.0, 1.0);
       c = mix(c, vec3(lm), suppress);
     }
-  `
+  `,
+	mask: { maskable: true }
 };
 /** Stages always registered (cheap inline corrections). The CA stage is
 *  registered on demand (its prepass shouldn't run when CA is inactive). */
@@ -423276,6 +423278,85 @@ function createLensPanel(api) {
 }
 
 //#endregion
+//#region src/ui/mask-panel.ts
+const VIGNETTING = {
+	label: "Vignetting",
+	key: `${STAGE.vignette}.vigManual`,
+	min: -100,
+	max: 100,
+	dflt: 0
+};
+const DEFRINGE = {
+	label: "Defringe",
+	key: `${STAGE.defringe}.dfAmount`,
+	min: 0,
+	max: 100,
+	dflt: 0
+};
+const HUES = [
+	{
+		label: "Purple hue",
+		key: `${STAGE.defringe}.dfPurpleHue`,
+		min: 0,
+		max: 360,
+		dflt: 0
+	},
+	{
+		label: "Green hue",
+		key: `${STAGE.defringe}.dfGreenHue`,
+		min: 0,
+		max: 360,
+		dflt: 0
+	},
+	{
+		label: "Hue radius",
+		key: `${STAGE.defringe}.dfRadius`,
+		min: 1,
+		max: 120,
+		dflt: 50
+	}
+];
+/** Every stage key the mask panel writes. */
+const MASK_KEYS = [
+	VIGNETTING,
+	DEFRINGE,
+	...HUES
+].map((s) => s.key);
+function createLensMaskPanel(api) {
+	const React = api.react;
+	const h = React.createElement;
+	function LensMaskPanel() {
+		const scope = api.develop.useParamScope();
+		const [advancedOpen, setAdvancedOpen] = React.useState(false);
+		const values = scope.getParams();
+		const slider = (s) => {
+			const value = values[s.key];
+			return h(api.components.Slider, {
+				key: s.label,
+				label: s.label,
+				value: typeof value === "number" ? value : s.dflt,
+				min: s.min,
+				max: s.max,
+				step: 1,
+				onChange: (v) => scope.setParams({ [s.key]: v }),
+				onCommit: () => scope.commit(`Lens ${s.label}`)
+			});
+		};
+		return h("div", { style: {
+			display: "flex",
+			flexDirection: "column",
+			gap: 1
+		} }, slider(VIGNETTING), slider(DEFRINGE), h(api.ui.Button, {
+			variant: "ghost",
+			size: "sm",
+			full: true,
+			onClick: () => setAdvancedOpen(!advancedOpen)
+		}, (advancedOpen ? "▾ " : "▸ ") + "Advanced defringe"), advancedOpen ? HUES.map(slider) : null);
+	}
+	return LensMaskPanel;
+}
+
+//#endregion
 //#region src/features/tiff.ts
 const TYPE_SIZE = {
 	1: 1,
@@ -423700,6 +423781,10 @@ function activate(api) {
 			direction: "right",
 			order: 9,
 			width: 280
+		},
+		mask: {
+			component: createLensMaskPanel(api),
+			owns: MASK_KEYS
 		}
 	});
 	api.registerCatalogHooks(embeddedCatalogHook(api));

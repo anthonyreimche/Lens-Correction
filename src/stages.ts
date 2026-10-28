@@ -66,6 +66,9 @@ export const caStage: ProcessingStageContribution = {
   id: STAGE.ca,
   name: "Lens Chromatic Aberration",
   phase: "decode",
+  // It replaces `lin` with a resample of the source, so it runs ahead of every
+  // other decode stage, whose work it would otherwise discard.
+  priority: 0,
   uniforms: [
     { key: "tcaModel", glslType: "int", default: 0 },
     { key: "caManual", glslType: "float", default: 0 },
@@ -156,6 +159,9 @@ export const vignetteStage: ProcessingStageContribution = {
     }
     lin *= clamp(fac, 0.0, 4.0);
   `,
+  // A mask's copy multiplies in the mask's own manual vignetting on top of the
+  // photo's correction; its profile terms stay 0, so the lens isn't corrected twice.
+  mask: { maskable: true },
 };
 
 // ─── Defringe (effects) ─────────────────────────────────────────────────────
@@ -208,6 +214,8 @@ export const defringeStage: ProcessingStageContribution = {
       c = mix(c, vec3(lm), suppress);
     }
   `,
+  // A mask's copy defringes again inside the mask with the mask's own amount and hues.
+  mask: { maskable: true },
 };
 
 /** Stages always registered (cheap inline corrections). The CA stage is

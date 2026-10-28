@@ -25,6 +25,12 @@ when you want it.
   amount, and radius.
 - **Full manual control** — distortion, fringing, defringe, and vignetting sliders, with
   auto-crop to hide the corrected borders.
+- **In masks:** add Lens Correction to a mask from the Masking panel's Adjust tab for a second
+  Vignetting and Defringe (with its Advanced defringe hues) inside that mask only, on top of
+  the photo's correction. The lens profile, distortion, chromatic aberration and Auto CA stay
+  the photo's: distortion and CA are applied before a mask's area is known, and Auto CA
+  measures the whole photo. It needs the current processing: on a photo edited in an earlier
+  Safelight, use Update processing first.
 - **Smart matching** — auto-detects your lens from EXIF, or your camera for fixed-lens bodies
   (X100, GFX100RF, RX100, …), with a searchable manual picker and a remembered choice per lens
   or body.
@@ -42,7 +48,8 @@ repo: `anthonyreimche/Lensfun-Lens-Correction`.
 ```sh
 npm install
 npm run build      # bundles src → dist/index.js (the Lensfun DB is inlined)
-npm test           # unit tests for the matching, interpolation, and parsers
+npm test           # unit tests for the matching, interpolation, parsers, and mask panel
+npm run test:gpu   # vignetting and defringe in a mask on a real WebGL2 driver, via a SafeLight checkout's rig
 ```
 
 `dist/` is committed so installs need no toolchain. The lens database is regenerated from the

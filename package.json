@@ -1,6 +1,6 @@
 {
   "name": "safelight-lens-correction",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Lens Correction extension for Safelight, powered by the Lensfun database.",
   "license": "MIT",
   "author": "Anthony Reimche",
@@ -10,6 +10,7 @@
     "build": "node build.mjs",
     "build:db": "node scripts/convert-lensfun-db.mjs",
     "test": "vitest run",
+    "test:gpu": "node test/gpu/run.cjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

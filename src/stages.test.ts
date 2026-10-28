@@ -57,3 +57,26 @@ describe("display-phase stages", () => {
     expect(glsl.startsWith("if (dfAmount >= 0.001) { c = clamp(c, 0.0, 1.0);")).toBe(true);
   });
 });
+
+// Masks run a copy of a stage only from scene-linear on; distortion (geometry)
+// and CA (decode) run before mask coverage is known.
+describe("masks", () => {
+  it("runs vignetting and defringe again inside masks", () => {
+    expect(vignetteStage.mask).toEqual({ maskable: true });
+    expect(defringeStage.mask).toEqual({ maskable: true });
+  });
+
+  it("leaves distortion and chromatic aberration to the photo", () => {
+    expect(distortionStage.mask).toBeUndefined();
+    expect(caStage.mask).toBeUndefined();
+  });
+});
+
+// The CA inline replaces `lin` with a resample of the source, so a decode stage
+// ordered ahead of it (capture sharpening, moiré reduction) would be discarded.
+describe("decode order", () => {
+  it("runs chromatic aberration ahead of every other decode stage", () => {
+    expect(caStage.phase).toBe("decode");
+    expect(caStage.priority).toBe(0);
+  });
+});
