@@ -13,7 +13,9 @@ import {
   pickLens,
   runAutoCa,
   clearAutoCa,
-  importLcp,
+  importLensProfile,
+  removeImport,
+  type ImportedItem,
 } from "../controller";
 import { loadLensDb, getCachedLensDb } from "../db/loader";
 import { lensDisplayName } from "../db/makers";
@@ -275,9 +277,11 @@ export function createLensPanel(api: SafelightAPI) {
     const source = useUI((s: { source: string | null }) => s.source);
     const status = useUI((s: { status: string | null }) => s.status);
     const busy = useUI((s: { busy: boolean }) => s.busy);
+    const imports = useUI((s: { imports: ImportedItem[] }) => s.imports);
+    const [importsOpen, setImportsOpen] = React.useState(false);
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const [advancedOpen, setAdvancedOpen] = React.useState(false);
-    const lcpInputRef = React.useRef(null);
+    const importInputRef = React.useRef(null);
 
     const profileBlock =
       state.mode === "profile"
@@ -317,20 +321,20 @@ export function createLensPanel(api: SafelightAPI) {
                 {
                   variant: "ghost",
                   size: "sm",
-                  onClick: () => lcpInputRef.current && lcpInputRef.current.click(),
-                  title: "Import an Adobe Lens Profile (.lcp)",
+                  onClick: () => importInputRef.current && importInputRef.current.click(),
+                  title: "Import a lens profile: Adobe .lcp or Lensfun .xml",
                 },
-                "LCP",
+                "Import",
               ),
               h("input", {
-                ref: lcpInputRef,
+                ref: importInputRef,
                 type: "file",
-                accept: ".lcp",
+                accept: ".lcp,.xml",
                 style: { display: "none" },
                 onChange: (e: { target: { files: FileList | null; value: string } }) => {
                   const f = e.target.files && e.target.files[0];
                   e.target.value = "";
-                  if (f) void importLcp(f);
+                  if (f) void importLensProfile(f);
                 },
               }),
             ),
@@ -345,6 +349,31 @@ export function createLensPanel(api: SafelightAPI) {
             h(Toggle, { label: "Chromatic Aberration", checked: state.caEnabled, onChange: () => updateState({ caEnabled: !state.caEnabled }, "Lens Toggle") }),
             h(Toggle, { label: "Vignetting", checked: state.vignetteEnabled, onChange: () => updateState({ vignetteEnabled: !state.vignetteEnabled }, "Lens Toggle") }),
             h(Toggle, { label: "Auto Crop", checked: state.autoCrop, onChange: () => updateState({ autoCrop: !state.autoCrop }, "Lens Toggle") }),
+            imports.length > 0
+              ? h(
+                  ui!.Button,
+                  { variant: "ghost", size: "sm", full: true, onClick: () => setImportsOpen(!importsOpen) },
+                  (importsOpen ? "▾ " : "▸ ") + `Imported profiles (${imports.length})`,
+                )
+              : null,
+            importsOpen
+              ? imports.map((item: ImportedItem) =>
+                  h(
+                    "div",
+                    { key: `${item.kind}:${item.key}`, style: { display: "flex", alignItems: "center", gap: 4, ...subtext } },
+                    h(
+                      "span",
+                      { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: item.label },
+                      item.label,
+                    ),
+                    h(
+                      ui!.Button,
+                      { variant: "ghost", size: "sm", disabled: busy, onClick: () => void removeImport(item), title: `Remove ${item.label}` },
+                      "Remove",
+                    ),
+                  ),
+                )
+              : null,
           )
         : null;
 

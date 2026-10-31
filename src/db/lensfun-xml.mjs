@@ -4,35 +4,78 @@
 
 /**
  * @param {string[]} xmlDocuments
- * @returns {{ lenses: import("../src/db/types").LensfunLens[], droppedDuplicates: number }}
+ * @returns {{ lenses: import("./types").LensfunLens[], droppedDuplicates: number, skipped: number }}
  */
 export function buildLensDatabase(xmlDocuments) {
   const parsed = xmlDocuments.map(parseXml);
   const cameras = parsed.flatMap((p) => p.cameras);
   const allLenses = parsed.flatMap((p) => p.lenses);
+  const skipped = parsed.reduce((n, p) => n + p.skipped, 0);
 
   // Only a repeat of maker, model, crop factor and mount set is a duplicate:
   // Lensfun lists one lens once per calibrated crop factor, and each is kept.
-  // On an id collision the first listing keeps the plain id, as in earlier
-  // releases, so persisted ids still resolve to the same lens.
-  const seenKeys = new Set();
+  // A repeat takes the later listing's calibration, so an entry added after a
+  // stock one recalibrates it. On an id collision the first listing keeps the
+  // plain id, as in earlier releases, so persisted ids still resolve.
+  const slotByKey = new Map();
   const usedIds = new Set();
   const lenses = [];
   for (const lens of allLenses) {
-    const key = [lens.maker, lens.model, lens.cropFactor, ...[...lens.mounts].sort()].join("\u0000");
-    if (seenKeys.has(key)) continue;
-    seenKeys.add(key);
-
+    const key = lensKey(lens);
+    const slot = slotByKey.get(key);
+    if (slot !== undefined) {
+      lenses[slot] = { ...lens, id: lenses[slot].id };
+      continue;
+    }
+    slotByKey.set(key, lenses.length);
     lens.id = uniqueId(lens, usedIds);
     usedIds.add(lens.id);
-    if (isFixedLens(lens.mounts)) lens.cameras = camerasOnMounts(cameras, lens.mounts);
     lenses.push(lens);
   }
+  for (const lens of lenses) {
+    if (isFixedLens(lens.mounts)) lens.cameras = camerasOnMounts(cameras, lens.mounts);
+  }
 
-  // Sort by maker, then model
-  lenses.sort((a, b) => a.maker.localeCompare(b.maker) || a.model.localeCompare(b.model));
+  lenses.sort(byName);
+  return { lenses, droppedDuplicates: allLenses.length - lenses.length, skipped };
+}
 
-  return { lenses, droppedDuplicates: allLenses.length - lenses.length };
+/**
+ * Lay imported lenses over a database: a lens already in it takes the imported
+ * calibration under its existing id (keeping its bodies if the import names
+ * none), and a new lens is added under an id no other lens has.
+ * @param {import("./types").LensfunLens[]} base
+ * @param {import("./types").LensfunLens[]} overrides
+ * @returns {import("./types").LensfunLens[]}
+ */
+export function mergeLenses(base, overrides) {
+  const merged = [...base];
+  const slotByKey = new Map(base.map((lens, i) => [lensKey(lens), i]));
+  const usedIds = new Set(base.map((lens) => lens.id));
+  for (const lens of overrides) {
+    const key = lensKey(lens);
+    const slot = slotByKey.get(key);
+    if (slot !== undefined) {
+      const existing = merged[slot];
+      const cameras = lens.cameras?.length ? lens.cameras : existing.cameras;
+      merged[slot] = { ...lens, id: existing.id, ...(cameras && { cameras }) };
+      continue;
+    }
+    const id = uniqueId(lens, usedIds);
+    usedIds.add(id);
+    slotByKey.set(key, merged.length);
+    merged.push({ ...lens, id });
+  }
+  return merged.sort(byName);
+}
+
+/** Maker, model, crop factor and mount set: what makes two listings one lens. */
+export function lensKey(lens) {
+  return [lens.maker, lens.model, lens.cropFactor, ...[...lens.mounts].sort()].join("\u0000");
+}
+
+function byName(a, b) {
+  return a.maker.localeCompare(b.maker) || a.model.localeCompare(b.model);
 }
 
 // Lensfun gives each fixed-lens camera its own pseudo-mount named with a
@@ -62,12 +105,16 @@ function uniqueId(lens, usedIds) {
   return id;
 }
 
-function parseXml(xml) {
+// A lens with a name but no calibration in a model this reads counts as skipped.
+function parseXml(source) {
+  const xml = source.replace(/<!--[\s\S]*?-->/g, "");
   const lenses = [];
+  let skipped = 0;
   const lensBlocks = xml.match(/<lens>[\s\S]*?<\/lens>/g) || [];
   for (const block of lensBlocks) {
     const lens = parseLensBlock(block);
     if (lens) lenses.push(lens);
+    else if (extractText(block, "model")) skipped++;
   }
 
   const cameras = [];
@@ -77,7 +124,7 @@ function parseXml(xml) {
     if (camera) cameras.push(camera);
   }
 
-  return { lenses, cameras };
+  return { lenses, cameras, skipped };
 }
 
 function parseCameraBlock(block) {
@@ -111,16 +158,18 @@ function parseLensBlock(block) {
   let focalMin = Infinity, focalMax = -Infinity;
   let apertureMin = Infinity, apertureMax = -Infinity;
 
-  const focalEl = block.match(/<focal\s+min="([^"]+)"(?:\s+max="([^"]+)")?/);
-  if (focalEl) {
-    focalMin = parseFloat(focalEl[1]);
-    focalMax = focalEl[2] ? parseFloat(focalEl[2]) : focalMin;
+  const focalEl = block.match(/<focal\s+([^>]*?)\/?>/);
+  const focalMinAttr = focalEl && attr(focalEl[1], "min");
+  if (focalMinAttr) {
+    focalMin = parseFloat(focalMinAttr);
+    focalMax = parseFloat(attr(focalEl[1], "max") || focalMinAttr);
   }
 
-  const apertureEl = block.match(/<aperture\s+min="([^"]+)"(?:\s+max="([^"]+)")?/);
-  if (apertureEl) {
-    apertureMin = parseFloat(apertureEl[1]);
-    apertureMax = apertureEl[2] ? parseFloat(apertureEl[2]) : apertureMin;
+  const apertureEl = block.match(/<aperture\s+([^>]*?)\/?>/);
+  const apertureMinAttr = apertureEl && attr(apertureEl[1], "min");
+  if (apertureMinAttr) {
+    apertureMin = parseFloat(apertureMinAttr);
+    apertureMax = parseFloat(attr(apertureEl[1], "max") || apertureMinAttr);
   }
 
   // Parse calibration data
@@ -295,7 +344,7 @@ function untaggedElement(tag) {
 }
 
 function englishElement(tag) {
-  return new RegExp(`<${tag}\\s+lang="en"[^>]*>([^<]+)</${tag}>`);
+  return new RegExp(`<${tag}\\s+lang=["']en["'][^>]*>([^<]+)</${tag}>`);
 }
 
 function firstText(xml, ...patterns) {
@@ -312,9 +361,10 @@ function decodeEntities(s) {
   return s.replace(/&(amp|lt|gt|quot|apos);/g, (_, name) => ENTITIES[name]);
 }
 
+// XML allows either quote around an attribute value.
 function attr(str, name) {
-  const m = str.match(new RegExp(`${name}="([^"]+)"`));
-  return m ? m[1] : null;
+  const m = str.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`));
+  return m ? m[1] ?? m[2] : null;
 }
 
 function slugify(s) {

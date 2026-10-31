@@ -17,7 +17,7 @@ export interface DistortionUniforms {
   distManual: number;
 }
 
-const MODEL_ID = { poly3: 1, poly5: 2, ptlens: 3 } as const;
+const MODEL_ID = { poly3: 1, poly5: 2, ptlens: 3, adobeFisheye: 4 } as const;
 
 /** Bind `profile`'s distortion (null when profile distortion is off) and the
  *  manual slider. */
@@ -52,9 +52,13 @@ export function distortionScale(u: DistortionUniforms, rr: number): number {
   if (u.distModel === 1) {
     scl = 1 - u.distKA + u.distKA * rp2;
   } else if (u.distModel === 2) {
-    scl = 1 + u.distKA * rp2 + u.distKB * rp2 * rp2;
+    scl = 1 + u.distKA * rp2 + u.distKB * rp2 * rp2 + u.distKC * rp2 * rp2 * rp2;
   } else if (u.distModel === 3) {
     scl = u.distKA * rp2 * rp + u.distKB * rp2 + u.distKC * rp + (1 - u.distKA - u.distKB - u.distKC);
+  } else if (u.distModel === 4 && rp > 0) {
+    const theta = Math.atan(rp);
+    const theta2 = theta * theta;
+    scl = (theta / rp) * (1 + u.distKA * theta2 + u.distKB * theta2 * theta2);
   }
   if (Math.abs(u.distManual) > 0.001) {
     scl += u.distManual * 0.0003 * rr2;

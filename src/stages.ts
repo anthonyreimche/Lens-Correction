@@ -44,10 +44,14 @@ export const distortionStage: ProcessingStageContribution = {
     if (distModel == 1) {
       scl = 1.0 - distKA + distKA * rp2;
     } else if (distModel == 2) {
-      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2;
+      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2 + distKC * rp2 * rp2 * rp2;
     } else if (distModel == 3) {
       scl = distKA * rp2 * rp + distKB * rp2 + distKC * rp
           + (1.0 - distKA - distKB - distKC);
+    } else if (distModel == 4 && rp > 0.0) {
+      float fishTheta = atan(rp);
+      float fishTheta2 = fishTheta * fishTheta;
+      scl = fishTheta / rp * (1.0 + distKA * fishTheta2 + distKB * fishTheta2 * fishTheta2);
     }
     if (abs(distManual) > 0.001) {
       scl += distManual * 0.0003 * rr2;

@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import type { LensfunLens } from "../src/db/types";
 import { resolveForLens } from "../src/db/matcher";
 import { distortionScale, distortionUniforms } from "../src/distortion";
-import { buildLensDatabase } from "./lensfun-xml.mjs";
+import { buildLensDatabase, mergeLenses } from "../src/db/lensfun-xml.mjs";
 
 const doc = (...blocks: string[]): string =>
   `<?xml version="1.0" encoding="utf-8"?>\n<lensdatabase version="2">\n${blocks.join("\n")}\n</lensdatabase>`;
@@ -198,6 +198,14 @@ describe("buildLensDatabase — ids and duplicates", () => {
     expect(droppedDuplicates).toBe(1);
   });
 
+  it("takes a repeated lens's calibration from the later listing, keeping the first id", () => {
+    const recalibrated = XF_LENS.replace('a="0.012"', 'a="0.099"');
+    const { lenses } = build(doc(XF_LENS, recalibrated));
+    expect(lenses).toHaveLength(1);
+    expect(lenses[0].id).toBe("fujifilm-xf-18-55mm-f-2-8-4-r-lm-ois");
+    expect(lenses[0].distortion[0].k[0]).toBe(0.099);
+  });
+
   it("keeps a lens's calibrations for different crop factors under distinct ids", () => {
     const names = `<maker>Nikon</maker>
         <model>Nikon AF-S Micro Nikkor 60mm f/2.8G ED</model>
@@ -257,6 +265,92 @@ describe("buildLensDatabase — ids and duplicates", () => {
       "GFX100RF & compatibles (Standard)",
       "XF18-55mmF2.8-4 R LM OIS",
     ]);
+  });
+});
+
+describe("buildLensDatabase — unreadable entries", () => {
+  it("ignores a lens commented out", () => {
+    const { lenses } = build(doc(`<!-- ${XF_LENS} -->`, GFX100RF_LENS));
+    expect(lenses.map((l) => l.model)).toEqual(["GFX100RF & compatibles (Standard)"]);
+  });
+
+  it("counts lenses it skips for want of a calibration it can read", () => {
+    const acm = `
+    <lens>
+        <maker>Sony</maker>
+        <model>FE 20mm F1.8 G</model>
+        <mount>Sony E</mount>
+        <calibration>
+            <distortion model="acm" focal="20" k1="-0.1" k2="0.02" k3="0" k4="0" k5="0"/>
+        </calibration>
+    </lens>`;
+    const { lenses, skipped } = build(doc(acm, XF_LENS));
+    expect(lenses).toHaveLength(1);
+    expect(skipped).toBe(1);
+  });
+});
+
+describe("buildLensDatabase — single-quoted attributes", () => {
+  const singleQuoted = `
+    <lens>
+        <maker>Sony</maker>
+        <model>FE 35mm F1.8</model>
+        <model lang='en'>Sony FE 35mm f/1.8</model>
+        <mount>Sony E</mount>
+        <cropfactor>1</cropfactor>
+        <focal min='35' max='35'/>
+        <aperture min='1.8' max='22'/>
+        <calibration>
+            <distortion model='ptlens' focal='35' a='0.01' b='-0.02' c='0.005'/>
+            <tca model='poly3' focal='35' vr='1.0002' vb='0.9998'/>
+            <vignetting model='pa' focal='35' aperture='1.8' distance='1000' k1='-0.5' k2='0.2' k3='-0.1'/>
+        </calibration>
+    </lens>`;
+
+  it("reads every calibration", () => {
+    const [lens] = build(doc(singleQuoted)).lenses;
+    expect(lens.distortion).toEqual([{ focal: 35, model: "ptlens", k: [0.01, -0.02, 0.005] }]);
+    expect(lens.tca).toEqual([{ focal: 35, model: "poly3", k: [0, 0, 1.0002, 0, 0, 0.9998] }]);
+    expect(lens.vignetting).toEqual([{ focal: 35, aperture: 1.8, distance: 1000, k: [-0.5, 0.2, -0.1] }]);
+  });
+
+  it("reads the focal and aperture range and the English name", () => {
+    const [lens] = build(doc(singleQuoted)).lenses;
+    expect([lens.focalMin, lens.focalMax, lens.apertureMin, lens.apertureMax]).toEqual([35, 35, 1.8, 22]);
+    expect(lens.id).toBe("sony-sony-fe-35mm-f-1-8");
+  });
+});
+
+describe("mergeLenses", () => {
+  const sigma = lens(`<maker>Sigma</maker>\n        <model>Sigma 19mm f/2.8 DN</model>`, ["Sony E"]);
+  const base = build(doc(XF_LENS, sigma)).lenses;
+
+  it("replaces a lens's calibration in place, under its existing id", () => {
+    const [mine] = build(doc(sigma.replace('a="0.012"', 'a="0.5"'))).lenses;
+    const merged = mergeLenses(base, [{ ...mine, id: "other" }]);
+    expect(merged).toHaveLength(2);
+    const replaced = byModel(merged, "Sigma 19mm f/2.8 DN");
+    expect(replaced.id).toBe(byModel(base, "Sigma 19mm f/2.8 DN").id);
+    expect(replaced.distortion[0].k[0]).toBe(0.5);
+  });
+
+  it("adds a new lens under an id no other lens has", () => {
+    const [mine] = build(doc(lens(`<maker>Fujifilm</maker>\n        <model>XF18-55mmF2.8-4 R LM OIS</model>\n        <model lang="en">XF 18-55mm f/2.8-4 R LM OIS</model>`, ["Sony E"]))).lenses;
+    const merged = mergeLenses(base, [mine]);
+    expect(merged).toHaveLength(3);
+    expect(new Set(merged.map((l) => l.id)).size).toBe(3);
+  });
+
+  it("keeps the bodies of a built-in lens when the replacement names none", () => {
+    const withBody = build(doc(GFX100RF_CAMERA, GFX100RF_LENS)).lenses;
+    const [mine] = build(doc(GFX100RF_LENS)).lenses;
+    expect(mergeLenses(withBody, [mine])[0].cameras).toEqual([{ maker: "Fujifilm", model: "GFX100RF" }]);
+  });
+
+  it("leaves the base list untouched", () => {
+    const [mine] = build(doc(sigma.replace('a="0.012"', 'a="0.5"'))).lenses;
+    mergeLenses(base, [mine]);
+    expect(byModel(base, "Sigma 19mm f/2.8 DN").distortion[0].k[0]).toBe(0.012);
   });
 });
 

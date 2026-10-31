@@ -3,11 +3,11 @@
 // Lens Correction extension. Run with: node scripts/convert-lensfun-db.mjs
 //
 // Input:  vendor/lensfun-db/*.xml
-// Output: data/lens-profiles.json  (build.mjs copies this into dist/data/)
+// Output: data/lens-profiles.json  (build.mjs inlines this into dist/index.js)
 
 import { readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import { buildLensDatabase } from "./lensfun-xml.mjs";
+import { buildLensDatabase } from "../src/db/lensfun-xml.mjs";
 
 const DB_DIR = join(import.meta.dirname, "..", "vendor", "lensfun-db");
 const OUT_FILE = join(import.meta.dirname, "..", "data", "lens-profiles.json");
@@ -20,5 +20,5 @@ const json = JSON.stringify(lenses);
 writeFileSync(OUT_FILE, json);
 
 console.log(`Converted ${files.length} XML files -> ${lenses.length} lenses`);
-console.log(`Dropped ${droppedDuplicates} duplicate lens entries`);
+console.log(`Merged ${droppedDuplicates} repeated lens entries (the later listing wins)`);
 console.log(`Output: ${OUT_FILE} (${(json.length / 1024).toFixed(0)} KB)`);

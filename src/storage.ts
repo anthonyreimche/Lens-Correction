@@ -4,10 +4,11 @@
 //   - "embedded": per-photo embedded RAW corrections (parsed at import, where the
 //     directory handle is available, then read back by photo id at develop time).
 //   - "lcp": the imported Adobe Lens Profile library, matched live like Lensfun.
+//   - "lensfun": imported Lensfun XML files, laid over the bundled database.
 
 const DB_NAME = "safelight-lens-correction";
-const DB_VERSION = 1;
-const STORES = ["embedded", "lcp"] as const;
+const DB_VERSION = 2;
+const STORES = ["embedded", "lcp", "lensfun"] as const;
 export type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -86,6 +87,38 @@ export async function idbHas(store: StoreName, key: string): Promise<boolean> {
       req.onerror = () => resolve(false);
     } catch {
       resolve(false);
+    }
+  });
+}
+
+/** Every [key, value] pair in a store, in key order. */
+export async function idbEntries<T>(store: StoreName): Promise<[string, T][]> {
+  const db = await openDb();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, "readonly");
+      const keys = tx.objectStore(store).getAllKeys();
+      const values = tx.objectStore(store).getAll();
+      tx.oncomplete = () => resolve(keys.result.map((k, i) => [String(k), values.result[i] as T]));
+      tx.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+export async function idbDelete(store: StoreName, key: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
     }
   });
 }

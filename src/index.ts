@@ -5,7 +5,7 @@
 
 import type { SafelightAPI } from "./types/safelight";
 import { EXT_ID } from "./params";
-import { initController, disposeController, recompute } from "./controller";
+import { initController, disposeController, recompute, lcpImportedElsewhere } from "./controller";
 import { createLensPanel } from "./ui/panel";
 import { createLensMaskPanel, MASK_KEYS } from "./ui/mask-panel";
 import { embeddedCatalogHook } from "./features/parse-embedded";
@@ -52,7 +52,7 @@ export function activate(api: SafelightAPI): void {
   api.registerCatalogHooks(embeddedCatalogHook(api));
 
   // Adobe LCP import: teach the Presets panel to accept .lcp files.
-  api.registerPresetImporter(lcpPresetImporter(api));
+  api.registerPresetImporter(lcpPresetImporter(lcpImportedElsewhere));
 
   // Re-resolve when a relevant setting changes (e.g. auto-apply, embedded pref).
   offSettings = api.settings.onChange(() => void recompute());

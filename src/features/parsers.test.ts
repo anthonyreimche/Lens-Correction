@@ -98,10 +98,10 @@ describe("adobeToResolved", () => {
   };
 
   it("maps a DNG-convention profile straight onto the poly5/tca/vignette models", () => {
-    const r = adobeToResolved(profile, 50, 1.5, "embedded");
+    const r = adobeToResolved(profile, { focal: 50, aspect: 1.5 }, "embedded");
     expect(r).not.toBeNull();
     expect(r!.source).toBe("embedded");
-    expect(r!.distortion).toEqual({ model: "poly5", k: [-0.1, 0.02] });
+    expect(r!.distortion).toEqual({ model: "poly5", k: [-0.1, 0.02, 0] });
     expect(r!.vignetting!.k).toEqual([-0.2, 0.05, 0]);
     expect(r!.tca!.model).toBe("poly3");
     // [br, cr, vr, bb, cb, vb]
@@ -113,7 +113,7 @@ describe("adobeToResolved", () => {
       ...profile,
       entries: [{ ...profile.entries[0], focalLengthX: 1.4 }],
     };
-    const r = adobeToResolved(lcp, 50, 1.5, "lcp");
+    const r = adobeToResolved(lcp, { focal: 50, aspect: 1.5 }, "lcp");
     // S = 0.5*sqrt(1 + 1/1.5²)/1.4 ≈ 0.4289; r² coeff = k1*S².
     const S = (0.5 * Math.sqrt(1 + 1 / (1.5 * 1.5))) / 1.4;
     expect(r!.distortion!.k[0]).toBeCloseTo(-0.1 * S * S, 6);
@@ -122,10 +122,10 @@ describe("adobeToResolved", () => {
 
   it.each([0.5, 1])("has the stage scale by 1 + k1·(S·r)² + k2·(S·r)⁴ at r = %f", (r) => {
     const stageScale = (p: ResolvedProfile) => distortionScale(distortionUniforms(p, 0), r);
-    expect(stageScale(adobeToResolved(profile, 50, 1.5, "embedded")!)).toBeCloseTo(1 - 0.1 * r ** 2 + 0.02 * r ** 4, 12);
+    expect(stageScale(adobeToResolved(profile, { focal: 50, aspect: 1.5 }, "embedded")!)).toBeCloseTo(1 - 0.1 * r ** 2 + 0.02 * r ** 4, 12);
 
     const lcp: AdobeProfile = { ...profile, entries: [{ ...profile.entries[0], focalLengthX: 1.4 }] };
     const sr = ((0.5 * Math.sqrt(1 + 1 / (1.5 * 1.5))) / 1.4) * r;
-    expect(stageScale(adobeToResolved(lcp, 50, 1.5, "lcp")!)).toBeCloseTo(1 - 0.1 * sr ** 2 + 0.02 * sr ** 4, 12);
+    expect(stageScale(adobeToResolved(lcp, { focal: 50, aspect: 1.5 }, "lcp")!)).toBeCloseTo(1 - 0.1 * sr ** 2 + 0.02 * sr ** 4, 12);
   });
 });

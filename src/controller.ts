@@ -6,12 +6,19 @@
 
 import type { SafelightAPI, ExifData, CatalogPhoto } from "./types/safelight";
 import type { ResolvedProfile } from "./db/types";
-import { loadLensDb, getCachedLensDb, findLensById } from "./db/loader";
+import {
+  loadLensDb,
+  getCachedLensDb,
+  findLensById,
+  importLensfunXml,
+  importedLensFiles,
+  removeLensfunXml,
+} from "./db/loader";
 import { resolveForPhoto, resolveForLens, matchLens, rememberKey } from "./db/matcher";
 import { lensDisplayName } from "./db/makers";
 import { resolveEmbedded } from "./features/embedded";
 import { resolveLcp } from "./features/lcp";
-import { importLcpFile } from "./features/parse-lcp";
+import { importLcpFile, importedLcps, removeLcp } from "./features/parse-lcp";
 import { estimateAutoCa } from "./features/auto-ca";
 import {
   type LensState,
@@ -35,6 +42,15 @@ export interface LensUIState {
   /** Transient status line (auto-CA progress, LCP import result). */
   status: string | null;
   busy: boolean;
+  /** Imported lens profile files, for the panel to list and remove. */
+  imports: ImportedItem[];
+}
+
+export interface ImportedItem {
+  kind: "xml" | "lcp";
+  /** Its storage key. */
+  key: string;
+  label: string;
 }
 
 let api: SafelightAPI;
@@ -66,6 +82,7 @@ export function initController(a: SafelightAPI): void {
       photoId: null,
       status: null,
       busy: false,
+      imports: [],
     }),
   );
 
@@ -77,6 +94,7 @@ export function initController(a: SafelightAPI): void {
   // Warm the DB and resolve the currently-open photo.
   void loadLensDb().then(() => recompute());
   void recompute();
+  void refreshImports();
 }
 
 export function disposeController(): void {
@@ -105,6 +123,16 @@ function currentPhoto(): CatalogPhoto | null {
   return api.stores.useCatalogStore.getState().photos.find((p) => p.id === id) ?? null;
 }
 
+const RENDERED_FORMATS = new Set(["jpg", "jpeg", "png", "tif", "tiff", "webp", "heic", "heif", "avif", "jxl", "gif", "bmp"]);
+
+/** Whether the photo is a raw file; undefined when it has no file name. */
+function isRawPhoto(photo: CatalogPhoto | null): boolean | undefined {
+  const ext = photo?.filename?.split(".").pop()?.toLowerCase();
+  return ext ? !RENDERED_FORMATS.has(ext) : undefined;
+}
+
+const embeddedEnabled = () => api.settings.get("embeddedCorrections", true);
+
 /** Displayed image aspect (W/H), accounting for EXIF orientation. */
 function photoAspect(photo: CatalogPhoto | null): number {
   const w = typeof photo?.width === "number" ? photo!.width : 0;
@@ -121,10 +149,11 @@ function photoAspect(photo: CatalogPhoto | null): number {
 
 async function resolveProfile(
   state: LensState,
-  exif: ExifData,
-  photoId: string | null,
+  photo: CatalogPhoto | null,
   aspect: number,
 ): Promise<ResolvedProfile | null> {
+  const exif: ExifData = photo?.exif ?? {};
+  const photoId = photo?.id ?? null;
   if (state.mode !== "profile") return null;
   const db = getCachedLensDb() ?? (await loadLensDb());
 
@@ -152,14 +181,16 @@ async function resolveProfile(
         ? (["embedded", "lensfun"] as const)
         : state.pref === "lcp"
           ? (["lcp", "lensfun"] as const)
-          : (["embedded", "lcp", "lensfun"] as const); // auto
+          : embeddedEnabled()
+            ? (["embedded", "lcp", "lensfun"] as const) // auto
+            : (["lcp", "lensfun"] as const);
 
   for (const src of order) {
     if (src === "embedded" && photoId) {
       const e = await resolveEmbedded(api, photoId);
       if (e) return e;
     } else if (src === "lcp") {
-      const l = await resolveLcp(api, exif, aspect);
+      const l = await resolveLcp(exif, { aspect, raw: isRawPhoto(photo), fuzzy: state.pref === "lcp" });
       if (l) return l;
     } else if (src === "lensfun") {
       const res = resolveForPhoto(exif, db, aspect);
@@ -181,12 +212,12 @@ export async function recompute(): Promise<void> {
   const aspect = photoAspect(photo);
 
   // Resolve (cached by the inputs that affect resolution).
-  const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}`;
+  const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}|${embeddedEnabled()}`;
   let profile: ResolvedProfile | null;
   if (key === cacheKey) {
     profile = cacheProfile;
   } else {
-    profile = await resolveProfile(state, exif, photoId, aspect);
+    profile = await resolveProfile(state, photo, aspect);
     if (seq !== resolveSeq) return; // a newer recompute superseded us
     if (api.stores.useDevelopStore.getState().photoId !== photoId) return;
     cacheKey = key;
@@ -228,10 +259,10 @@ export async function recompute(): Promise<void> {
 
 /** Merge a patch into the persisted LensState, re-render live, and optionally
  *  commit to history (on slider release / discrete actions). */
-export function updateState(patch: Partial<LensState>, commitLabel?: string): void {
+export function updateState(patch: Partial<LensState>, commitLabel?: string): Promise<void> {
   const next: LensState = { ...readState(), ...patch };
   api.stores.useDevelopStore.getState().setDynParam(STATE_KEY, next);
-  void recompute().then(() => {
+  return recompute().then(() => {
     if (commitLabel) void api.stores.useDevelopStore.getState().commitEdit(commitLabel);
   });
 }
@@ -294,8 +325,13 @@ export function clearAutoCa(): void {
   uiStore.setState({ status: null });
 }
 
+/** Import a lens profile file: a Lensfun .xml database file or an Adobe .lcp. */
+export function importLensProfile(file: File): Promise<void> {
+  return file.name.toLowerCase().endsWith(".xml") ? importLensfun(file) : importLcp(file);
+}
+
 /** Import an Adobe Lens Profile and prefer LCP corrections for this photo. */
-export async function importLcp(file: File): Promise<void> {
+async function importLcp(file: File): Promise<void> {
   uiStore.setState({ busy: true, status: `Importing ${file.name}…` });
   try {
     const profile = await importLcpFile(file);
@@ -305,9 +341,61 @@ export async function importLcp(file: File): Promise<void> {
     }
     // Invalidate the resolution cache so the new library is consulted.
     cacheKey = "";
-    updateState({ mode: "profile", pref: "lcp", lensId: null }, "Import LCP");
-    uiStore.setState({ busy: false, status: `Imported: ${profile.lens || profile.model}` });
+    await updateState({ mode: "profile", pref: "lcp", lensId: null }, "Import LCP");
+    await refreshImports();
+    const name = profile.lens || profile.model;
+    const applied = uiStore.getState().source === "lcp";
+    uiStore.setState({
+      busy: false,
+      status: applied ? `Imported: ${name}` : `Imported ${name}. It doesn't match this photo's lens.`,
+    });
   } catch {
     uiStore.setState({ busy: false, status: "LCP import failed." });
   }
+}
+
+const lensCount = (n: number) => (n === 1 ? "1 lens" : `${n} lenses`);
+
+/** Import a Lensfun XML file into the lens database and re-resolve the photo. */
+async function importLensfun(file: File): Promise<void> {
+  uiStore.setState({ busy: true, status: `Importing ${file.name}…` });
+  try {
+    const { lenses, skipped } = await importLensfunXml(file.name, await file.text());
+    const unread = skipped > 0 ? ` ${lensCount(skipped)} skipped: their calibration format isn't supported.` : "";
+    if (lenses.length === 0) {
+      uiStore.setState({ busy: false, status: `No usable lenses in this file.${unread}` });
+      return;
+    }
+    cacheKey = "";
+    await recompute();
+    await refreshImports();
+    uiStore.setState({ busy: false, status: `Imported ${lensCount(lenses.length)} from ${file.name}.${unread}` });
+  } catch {
+    uiStore.setState({ busy: false, status: "Lens file import failed." });
+  }
+}
+
+async function refreshImports(): Promise<void> {
+  const [files, lcps] = await Promise.all([importedLensFiles(), importedLcps()]);
+  const imports: ImportedItem[] = [
+    ...files.map((f) => ({ kind: "xml" as const, key: f.key, label: `${f.name} (${lensCount(f.count)})` })),
+    ...lcps.map((p) => ({ kind: "lcp" as const, key: p.key, label: p.model ? `${p.lens} (${p.model})` : p.lens })),
+  ];
+  uiStore.setState({ imports });
+}
+
+/** Remove an imported profile file and re-resolve the photo without it. */
+export async function removeImport(item: ImportedItem): Promise<void> {
+  await (item.kind === "xml" ? removeLensfunXml(item.key) : removeLcp(item.key));
+  cacheKey = "";
+  await recompute();
+  await refreshImports();
+  uiStore.setState({ status: `Removed ${item.label}.` });
+}
+
+/** An .lcp arrived through the Presets panel's import. */
+export function lcpImportedElsewhere(): void {
+  cacheKey = "";
+  void recompute();
+  void refreshImports();
 }

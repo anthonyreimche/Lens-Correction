@@ -2,7 +2,8 @@
 const MODEL_ID = {
 	poly3: 1,
 	poly5: 2,
-	ptlens: 3
+	ptlens: 3,
+	adobeFisheye: 4
 };
 /** Bind `profile`'s distortion (null when profile distortion is off) and the
 *  manual slider. */
@@ -40,8 +41,13 @@ function distortionScale(u, rr) {
 	const rp2 = rp * rp;
 	let scl = 1;
 	if (u.distModel === 1) scl = 1 - u.distKA + u.distKA * rp2;
-	else if (u.distModel === 2) scl = 1 + u.distKA * rp2 + u.distKB * rp2 * rp2;
+	else if (u.distModel === 2) scl = 1 + u.distKA * rp2 + u.distKB * rp2 * rp2 + u.distKC * rp2 * rp2 * rp2;
 	else if (u.distModel === 3) scl = u.distKA * rp2 * rp + u.distKB * rp2 + u.distKC * rp + (1 - u.distKA - u.distKB - u.distKC);
+	else if (u.distModel === 4 && rp > 0) {
+		const theta = Math.atan(rp);
+		const theta2 = theta * theta;
+		scl = theta / rp * (1 + u.distKA * theta2 + u.distKB * theta2 * theta2);
+	}
 	if (Math.abs(u.distManual) > .001) scl += u.distManual * 3e-4 * rr2;
 	return scl;
 }
@@ -8818,7 +8824,7 @@ var lens_profiles_default = [
 		"model": "Canon EF 15mm f/2.8 Fisheye",
 		"mounts": ["Canon EF"],
 		"cropFactor": 1,
-		"type": "fisheye",
+		"type": "rectilinear",
 		"focalMin": 15,
 		"focalMax": 15,
 		"apertureMin": 2.8,
@@ -378733,490 +378739,6 @@ var lens_profiles_default = [
 		"vignetting": []
 	},
 	{
-		"id": "tamron-tamron-150-500mm-f5-6-7-di-iii-vc-vxd",
-		"maker": "Tamron",
-		"model": "E 150-500mm F5-6.7 A057",
-		"mounts": ["Sony E", "Nikon Z"],
-		"cropFactor": 1,
-		"type": "rectilinear",
-		"focalMin": 150,
-		"focalMax": 500,
-		"apertureMin": 5,
-		"apertureMax": 32,
-		"distortion": [
-			{
-				"focal": 150,
-				"model": "ptlens",
-				"k": [
-					.0022672,
-					.0040397,
-					.0022444
-				]
-			},
-			{
-				"focal": 220,
-				"model": "ptlens",
-				"k": [
-					.0028572,
-					.0057325,
-					.0020892
-				]
-			},
-			{
-				"focal": 285,
-				"model": "ptlens",
-				"k": [
-					.0027932,
-					.0058954,
-					.0017682
-				]
-			},
-			{
-				"focal": 352,
-				"model": "ptlens",
-				"k": [
-					.0024722,
-					.0050165,
-					.0019908
-				]
-			},
-			{
-				"focal": 413,
-				"model": "ptlens",
-				"k": [
-					9409e-7,
-					.0078229,
-					-.0015876
-				]
-			},
-			{
-				"focal": 500,
-				"model": "ptlens",
-				"k": [
-					9834e-7,
-					.0053593,
-					-5511e-7
-				]
-			}
-		],
-		"tca": [
-			{
-				"focal": 150,
-				"model": "poly3",
-				"k": [
-					-552e-7,
-					266e-7,
-					1.0001565,
-					659e-7,
-					-38e-6,
-					.9999499
-				]
-			},
-			{
-				"focal": 220,
-				"model": "poly3",
-				"k": [
-					29e-7,
-					-959e-7,
-					1.0000996,
-					-27e-6,
-					1473e-7,
-					.9998869
-				]
-			},
-			{
-				"focal": 285,
-				"model": "poly3",
-				"k": [
-					425e-7,
-					-1585e-7,
-					1.000023,
-					0,
-					0,
-					1
-				]
-			},
-			{
-				"focal": 352,
-				"model": "poly3",
-				"k": [
-					0,
-					0,
-					.9998779,
-					-75e-6,
-					1588e-7,
-					.9999264
-				]
-			},
-			{
-				"focal": 413,
-				"model": "poly3",
-				"k": [
-					934e-7,
-					-1852e-7,
-					.9998971,
-					425e-7,
-					-1585e-7,
-					1.000084
-				]
-			},
-			{
-				"focal": 500,
-				"model": "poly3",
-				"k": [
-					893e-7,
-					-1737e-7,
-					.9998896,
-					-793e-7,
-					1385e-7,
-					.9998867
-				]
-			}
-		],
-		"vignetting": [
-			{
-				"focal": 150,
-				"aperture": 5,
-				"distance": 294.33,
-				"k": [
-					-1.1268233,
-					.9722114,
-					-.461192
-				]
-			},
-			{
-				"focal": 150,
-				"aperture": 8,
-				"distance": 294.33,
-				"k": [
-					-.1435171,
-					.1960792,
-					-.343128
-				]
-			},
-			{
-				"focal": 150,
-				"aperture": 11,
-				"distance": 294.33,
-				"k": [
-					-.1282902,
-					.0222015,
-					-.052375
-				]
-			},
-			{
-				"focal": 150,
-				"aperture": 16,
-				"distance": 294.33,
-				"k": [
-					-.1149572,
-					-.0506747,
-					.0269368
-				]
-			},
-			{
-				"focal": 150,
-				"aperture": 22,
-				"distance": 294.33,
-				"k": [
-					-.1149572,
-					-.0506747,
-					.0269368
-				]
-			},
-			{
-				"focal": 221,
-				"aperture": 5,
-				"distance": 433.64,
-				"k": [
-					-.9305093,
-					.6094995,
-					-.25442
-				]
-			},
-			{
-				"focal": 221,
-				"aperture": 8,
-				"distance": 433.64,
-				"k": [
-					-.1345916,
-					.1408487,
-					-.2630422
-				]
-			},
-			{
-				"focal": 221,
-				"aperture": 11,
-				"distance": 433.64,
-				"k": [
-					-.1128968,
-					-.0410574,
-					.0164701
-				]
-			},
-			{
-				"focal": 221,
-				"aperture": 16,
-				"distance": 433.64,
-				"k": [
-					-.1117803,
-					-.0476251,
-					.0244904
-				]
-			},
-			{
-				"focal": 221,
-				"aperture": 22,
-				"distance": 433.64,
-				"k": [
-					-.110917,
-					-.0506639,
-					.0264412
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 5.6,
-				"distance": 565.11,
-				"k": [
-					-.7449472,
-					.1953626,
-					-.0455022
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 8,
-				"distance": 565.11,
-				"k": [
-					-.0856929,
-					-.0073272,
-					-.2226846
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 11,
-				"distance": 565.11,
-				"k": [
-					-.1065564,
-					-.0082176,
-					-.0210813
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 16,
-				"distance": 565.11,
-				"k": [
-					-.0991465,
-					-.0491392,
-					.0248997
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 22,
-				"distance": 565.11,
-				"k": [
-					-.0991465,
-					-.0491392,
-					.0248997
-				]
-			},
-			{
-				"focal": 288,
-				"aperture": 25,
-				"distance": 565.11,
-				"k": [
-					-.0991465,
-					-.0491392,
-					.0248997
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 5.6,
-				"distance": 704.42,
-				"k": [
-					-.675129,
-					-.1693999,
-					.2176373
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 8,
-				"distance": 704.42,
-				"k": [
-					.0411887,
-					-.6814473,
-					.2335346
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 11,
-				"distance": 704.42,
-				"k": [
-					-.0987925,
-					.0834709,
-					-.1506292
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 16,
-				"distance": 704.42,
-				"k": [
-					-.082109,
-					-.0416505,
-					.02103
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 22,
-				"distance": 704.42,
-				"k": [
-					-.0822914,
-					-.0411781,
-					.0209825
-				]
-			},
-			{
-				"focal": 359,
-				"aperture": 25,
-				"distance": 704.42,
-				"k": [
-					-.0822914,
-					-.0411781,
-					.0209825
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 6.3,
-				"distance": 828.04,
-				"k": [
-					-.9523503,
-					.3855235,
-					-.0538812
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 8,
-				"distance": 828.04,
-				"k": [
-					.0084887,
-					-.9916225,
-					.5253941
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 11,
-				"distance": 828.04,
-				"k": [
-					-.0470988,
-					-.0116146,
-					-.1380428
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 16,
-				"distance": 828.04,
-				"k": [
-					-.0677518,
-					-.0144772,
-					-.0072479
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 22,
-				"distance": 828.04,
-				"k": [
-					-.0596224,
-					-.0469464,
-					.0237526
-				]
-			},
-			{
-				"focal": 422,
-				"aperture": 29,
-				"distance": 828.04,
-				"k": [
-					-.0596224,
-					-.0469464,
-					.0237526
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 6.7,
-				"distance": 981.09,
-				"k": [
-					-1.2977758,
-					1.2110549,
-					-.5109348
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 8,
-				"distance": 981.09,
-				"k": [
-					-.3769323,
-					-.3767023,
-					.2686158
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 11,
-				"distance": 981.09,
-				"k": [
-					.0120916,
-					-.2507473,
-					.0222845
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 16,
-				"distance": 981.09,
-				"k": [
-					-.0602327,
-					.0338437,
-					-.0578085
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 22,
-				"distance": 981.09,
-				"k": [
-					-.0469081,
-					-.0358817,
-					.018174
-				]
-			},
-			{
-				"focal": 500,
-				"aperture": 32,
-				"distance": 981.09,
-				"k": [
-					-.0474349,
-					-.0334562,
-					.0163318
-				]
-			}
-		]
-	},
-	{
 		"id": "tamron-tamron-e-17-28mm-f2-8-2-8",
 		"maker": "Tamron",
 		"model": "E 17-28mm F2.8-2.8",
@@ -392265,6 +391787,490 @@ var lens_profiles_default = [
 			}
 		],
 		"vignetting": []
+	},
+	{
+		"id": "tamron-tamron-150-500mm-f5-6-7-di-iii-vc-vxd",
+		"maker": "Tamron",
+		"model": "Tamron E 150-500mm F/5-6.7 Di III VC VXD A057Z",
+		"mounts": ["Sony E", "Nikon Z"],
+		"cropFactor": 1,
+		"type": "rectilinear",
+		"focalMin": 150,
+		"focalMax": 500,
+		"apertureMin": 5,
+		"apertureMax": 32,
+		"distortion": [
+			{
+				"focal": 150,
+				"model": "ptlens",
+				"k": [
+					.0022672,
+					.0040397,
+					.0022444
+				]
+			},
+			{
+				"focal": 220,
+				"model": "ptlens",
+				"k": [
+					.0028572,
+					.0057325,
+					.0020892
+				]
+			},
+			{
+				"focal": 285,
+				"model": "ptlens",
+				"k": [
+					.0027932,
+					.0058954,
+					.0017682
+				]
+			},
+			{
+				"focal": 352,
+				"model": "ptlens",
+				"k": [
+					.0024722,
+					.0050165,
+					.0019908
+				]
+			},
+			{
+				"focal": 413,
+				"model": "ptlens",
+				"k": [
+					9409e-7,
+					.0078229,
+					-.0015876
+				]
+			},
+			{
+				"focal": 500,
+				"model": "ptlens",
+				"k": [
+					9834e-7,
+					.0053593,
+					-5511e-7
+				]
+			}
+		],
+		"tca": [
+			{
+				"focal": 150,
+				"model": "poly3",
+				"k": [
+					-552e-7,
+					266e-7,
+					1.0001565,
+					659e-7,
+					-38e-6,
+					.9999499
+				]
+			},
+			{
+				"focal": 220,
+				"model": "poly3",
+				"k": [
+					29e-7,
+					-959e-7,
+					1.0000996,
+					-27e-6,
+					1473e-7,
+					.9998869
+				]
+			},
+			{
+				"focal": 285,
+				"model": "poly3",
+				"k": [
+					425e-7,
+					-1585e-7,
+					1.000023,
+					0,
+					0,
+					1
+				]
+			},
+			{
+				"focal": 352,
+				"model": "poly3",
+				"k": [
+					0,
+					0,
+					.9998779,
+					-75e-6,
+					1588e-7,
+					.9999264
+				]
+			},
+			{
+				"focal": 413,
+				"model": "poly3",
+				"k": [
+					934e-7,
+					-1852e-7,
+					.9998971,
+					425e-7,
+					-1585e-7,
+					1.000084
+				]
+			},
+			{
+				"focal": 500,
+				"model": "poly3",
+				"k": [
+					893e-7,
+					-1737e-7,
+					.9998896,
+					-793e-7,
+					1385e-7,
+					.9998867
+				]
+			}
+		],
+		"vignetting": [
+			{
+				"focal": 150,
+				"aperture": 5,
+				"distance": 294.33,
+				"k": [
+					-1.1268233,
+					.9722114,
+					-.461192
+				]
+			},
+			{
+				"focal": 150,
+				"aperture": 8,
+				"distance": 294.33,
+				"k": [
+					-.1435171,
+					.1960792,
+					-.343128
+				]
+			},
+			{
+				"focal": 150,
+				"aperture": 11,
+				"distance": 294.33,
+				"k": [
+					-.1282902,
+					.0222015,
+					-.052375
+				]
+			},
+			{
+				"focal": 150,
+				"aperture": 16,
+				"distance": 294.33,
+				"k": [
+					-.1149572,
+					-.0506747,
+					.0269368
+				]
+			},
+			{
+				"focal": 150,
+				"aperture": 22,
+				"distance": 294.33,
+				"k": [
+					-.1149572,
+					-.0506747,
+					.0269368
+				]
+			},
+			{
+				"focal": 221,
+				"aperture": 5,
+				"distance": 433.64,
+				"k": [
+					-.9305093,
+					.6094995,
+					-.25442
+				]
+			},
+			{
+				"focal": 221,
+				"aperture": 8,
+				"distance": 433.64,
+				"k": [
+					-.1345916,
+					.1408487,
+					-.2630422
+				]
+			},
+			{
+				"focal": 221,
+				"aperture": 11,
+				"distance": 433.64,
+				"k": [
+					-.1128968,
+					-.0410574,
+					.0164701
+				]
+			},
+			{
+				"focal": 221,
+				"aperture": 16,
+				"distance": 433.64,
+				"k": [
+					-.1117803,
+					-.0476251,
+					.0244904
+				]
+			},
+			{
+				"focal": 221,
+				"aperture": 22,
+				"distance": 433.64,
+				"k": [
+					-.110917,
+					-.0506639,
+					.0264412
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 5.6,
+				"distance": 565.11,
+				"k": [
+					-.7449472,
+					.1953626,
+					-.0455022
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 8,
+				"distance": 565.11,
+				"k": [
+					-.0856929,
+					-.0073272,
+					-.2226846
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 11,
+				"distance": 565.11,
+				"k": [
+					-.1065564,
+					-.0082176,
+					-.0210813
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 16,
+				"distance": 565.11,
+				"k": [
+					-.0991465,
+					-.0491392,
+					.0248997
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 22,
+				"distance": 565.11,
+				"k": [
+					-.0991465,
+					-.0491392,
+					.0248997
+				]
+			},
+			{
+				"focal": 288,
+				"aperture": 25,
+				"distance": 565.11,
+				"k": [
+					-.0991465,
+					-.0491392,
+					.0248997
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 5.6,
+				"distance": 704.42,
+				"k": [
+					-.675129,
+					-.1693999,
+					.2176373
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 8,
+				"distance": 704.42,
+				"k": [
+					.0411887,
+					-.6814473,
+					.2335346
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 11,
+				"distance": 704.42,
+				"k": [
+					-.0987925,
+					.0834709,
+					-.1506292
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 16,
+				"distance": 704.42,
+				"k": [
+					-.082109,
+					-.0416505,
+					.02103
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 22,
+				"distance": 704.42,
+				"k": [
+					-.0822914,
+					-.0411781,
+					.0209825
+				]
+			},
+			{
+				"focal": 359,
+				"aperture": 25,
+				"distance": 704.42,
+				"k": [
+					-.0822914,
+					-.0411781,
+					.0209825
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 6.3,
+				"distance": 828.04,
+				"k": [
+					-.9523503,
+					.3855235,
+					-.0538812
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 8,
+				"distance": 828.04,
+				"k": [
+					.0084887,
+					-.9916225,
+					.5253941
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 11,
+				"distance": 828.04,
+				"k": [
+					-.0470988,
+					-.0116146,
+					-.1380428
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 16,
+				"distance": 828.04,
+				"k": [
+					-.0677518,
+					-.0144772,
+					-.0072479
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 22,
+				"distance": 828.04,
+				"k": [
+					-.0596224,
+					-.0469464,
+					.0237526
+				]
+			},
+			{
+				"focal": 422,
+				"aperture": 29,
+				"distance": 828.04,
+				"k": [
+					-.0596224,
+					-.0469464,
+					.0237526
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 6.7,
+				"distance": 981.09,
+				"k": [
+					-1.2977758,
+					1.2110549,
+					-.5109348
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 8,
+				"distance": 981.09,
+				"k": [
+					-.3769323,
+					-.3767023,
+					.2686158
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 11,
+				"distance": 981.09,
+				"k": [
+					.0120916,
+					-.2507473,
+					.0222845
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 16,
+				"distance": 981.09,
+				"k": [
+					-.0602327,
+					.0338437,
+					-.0578085
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 22,
+				"distance": 981.09,
+				"k": [
+					-.0469081,
+					-.0358817,
+					.018174
+				]
+			},
+			{
+				"focal": 500,
+				"aperture": 32,
+				"distance": 981.09,
+				"k": [
+					-.0474349,
+					-.0334562,
+					.0163318
+				]
+			}
+		]
 	},
 	{
 		"id": "tamron-tamron-28-75mm-f2-8-di-iii-vxd-g2-a063",
@@ -421517,19 +421523,491 @@ var lens_profiles_default = [
 ];
 
 //#endregion
-//#region src/db/loader.ts
-const db = lens_profiles_default;
-/** Async for source compatibility; the database is resident from module load. */
-function loadLensDb() {
-	return Promise.resolve(db);
+//#region src/db/lensfun-xml.mjs
+/**
+* @param {string[]} xmlDocuments
+* @returns {{ lenses: import("./types").LensfunLens[], droppedDuplicates: number, skipped: number }}
+*/
+function buildLensDatabase(xmlDocuments) {
+	const parsed = xmlDocuments.map(parseXml);
+	const cameras = parsed.flatMap((p) => p.cameras);
+	const allLenses = parsed.flatMap((p) => p.lenses);
+	const skipped = parsed.reduce((n, p) => n + p.skipped, 0);
+	const slotByKey = /* @__PURE__ */ new Map();
+	const usedIds = /* @__PURE__ */ new Set();
+	const lenses = [];
+	for (const lens of allLenses) {
+		const key = lensKey(lens);
+		const slot = slotByKey.get(key);
+		if (slot !== void 0) {
+			lenses[slot] = {
+				...lens,
+				id: lenses[slot].id
+			};
+			continue;
+		}
+		slotByKey.set(key, lenses.length);
+		lens.id = uniqueId(lens, usedIds);
+		usedIds.add(lens.id);
+		lenses.push(lens);
+	}
+	for (const lens of lenses) if (isFixedLens(lens.mounts)) lens.cameras = camerasOnMounts(cameras, lens.mounts);
+	lenses.sort(byName);
+	return {
+		lenses,
+		droppedDuplicates: allLenses.length - lenses.length,
+		skipped
+	};
 }
-/** Synchronous access to the database. */
+/**
+* Lay imported lenses over a database: a lens already in it takes the imported
+* calibration under its existing id (keeping its bodies if the import names
+* none), and a new lens is added under an id no other lens has.
+* @param {import("./types").LensfunLens[]} base
+* @param {import("./types").LensfunLens[]} overrides
+* @returns {import("./types").LensfunLens[]}
+*/
+function mergeLenses(base, overrides) {
+	const merged = [...base];
+	const slotByKey = new Map(base.map((lens, i) => [lensKey(lens), i]));
+	const usedIds = new Set(base.map((lens) => lens.id));
+	for (const lens of overrides) {
+		const key = lensKey(lens);
+		const slot = slotByKey.get(key);
+		if (slot !== void 0) {
+			const existing = merged[slot];
+			const cameras = lens.cameras?.length ? lens.cameras : existing.cameras;
+			merged[slot] = {
+				...lens,
+				id: existing.id,
+				...cameras && { cameras }
+			};
+			continue;
+		}
+		const id = uniqueId(lens, usedIds);
+		usedIds.add(id);
+		slotByKey.set(key, merged.length);
+		merged.push({
+			...lens,
+			id
+		});
+	}
+	return merged.sort(byName);
+}
+/** Maker, model, crop factor and mount set: what makes two listings one lens. */
+function lensKey(lens) {
+	return [
+		lens.maker,
+		lens.model,
+		lens.cropFactor,
+		...[...lens.mounts].sort()
+	].join("\0");
+}
+function byName(a, b) {
+	return a.maker.localeCompare(b.maker) || a.model.localeCompare(b.model);
+}
+function isFixedLens(mounts) {
+	return mounts.length > 0 && mounts.every((m) => /^[a-z]/.test(m));
+}
+function camerasOnMounts(cameras, mounts) {
+	const seen = /* @__PURE__ */ new Set();
+	const result = [];
+	for (const camera of cameras) {
+		const key = `${camera.maker}\u0000${camera.model}`;
+		if (!mounts.includes(camera.mount) || seen.has(key)) continue;
+		seen.add(key);
+		result.push({
+			maker: camera.maker,
+			model: camera.model
+		});
+	}
+	return result;
+}
+function uniqueId(lens, usedIds) {
+	if (!usedIds.has(lens.id)) return lens.id;
+	const withMount = slugify(`${lens.id}-${lens.mounts[0] ?? ""}`);
+	let id = withMount;
+	for (let n = 2; usedIds.has(id); n++) id = `${withMount}-${n}`;
+	return id;
+}
+function parseXml(source) {
+	const xml = source.replace(/<!--[\s\S]*?-->/g, "");
+	const lenses = [];
+	let skipped = 0;
+	const lensBlocks = xml.match(/<lens>[\s\S]*?<\/lens>/g) || [];
+	for (const block of lensBlocks) {
+		const lens = parseLensBlock(block);
+		if (lens) lenses.push(lens);
+		else if (extractText(block, "model")) skipped++;
+	}
+	const cameras = [];
+	const cameraBlocks = xml.match(/<camera>[\s\S]*?<\/camera>/g) || [];
+	for (const block of cameraBlocks) {
+		const camera = parseCameraBlock(block);
+		if (camera) cameras.push(camera);
+	}
+	return {
+		lenses,
+		cameras,
+		skipped
+	};
+}
+function parseCameraBlock(block) {
+	const maker = extractText(block, "maker");
+	const model = extractText(block, "model");
+	const mount = extractText(block, "mount");
+	return maker && model && mount ? {
+		maker,
+		model,
+		mount
+	} : null;
+}
+function parseLensBlock(block) {
+	const maker = extractText(block, "maker") || "";
+	const model = extractText(block, "model") || "";
+	if (!model) return null;
+	const mounts = extractAllText(block, "mount");
+	const idName = isFixedLens(mounts) ? `${maker}-${model}` : `${extractEnglishText(block, "maker") || ""}-${extractEnglishText(block, "model")}`;
+	const cropStr = extractText(block, "cropfactor");
+	const cropFactor = cropStr ? parseFloat(cropStr) : 1;
+	const aspectRatio = parseAspectRatio(extractText(block, "aspect-ratio"));
+	const typeStr = extractText(block, "type") || "rectilinear";
+	let focalMin = Infinity, focalMax = -Infinity;
+	let apertureMin = Infinity, apertureMax = -Infinity;
+	const focalEl = block.match(/<focal\s+([^>]*?)\/?>/);
+	const focalMinAttr = focalEl && attr(focalEl[1], "min");
+	if (focalMinAttr) {
+		focalMin = parseFloat(focalMinAttr);
+		focalMax = parseFloat(attr(focalEl[1], "max") || focalMinAttr);
+	}
+	const apertureEl = block.match(/<aperture\s+([^>]*?)\/?>/);
+	const apertureMinAttr = apertureEl && attr(apertureEl[1], "min");
+	if (apertureMinAttr) {
+		apertureMin = parseFloat(apertureMinAttr);
+		apertureMax = parseFloat(attr(apertureEl[1], "max") || apertureMinAttr);
+	}
+	const distortion = [];
+	const tca = [];
+	const vignetting = [];
+	const distMatches = block.matchAll(/<distortion\s+([^/>]+)\/?>/g);
+	for (const m of distMatches) {
+		const d = parseDistortion(m[1]);
+		if (d) {
+			distortion.push(d);
+			if (d.focal < focalMin) focalMin = d.focal;
+			if (d.focal > focalMax) focalMax = d.focal;
+		}
+	}
+	const tcaMatches = block.matchAll(/<tca\s+([^/>]+)\/?>/g);
+	for (const m of tcaMatches) {
+		const t = parseTca(m[1]);
+		if (t) {
+			tca.push(t);
+			if (t.focal < focalMin) focalMin = t.focal;
+			if (t.focal > focalMax) focalMax = t.focal;
+		}
+	}
+	const vigMatches = block.matchAll(/<vignetting\s+([^/>]+)\/?>/g);
+	for (const m of vigMatches) {
+		const v = parseVignetting(m[1]);
+		if (v) {
+			vignetting.push(v);
+			if (v.focal < focalMin) focalMin = v.focal;
+			if (v.focal > focalMax) focalMax = v.focal;
+			if (v.aperture < apertureMin) apertureMin = v.aperture;
+			if (v.aperture > apertureMax) apertureMax = v.aperture;
+		}
+	}
+	if (distortion.length === 0 && tca.length === 0 && vignetting.length === 0) return null;
+	if (!isFinite(focalMin)) focalMin = 0;
+	if (!isFinite(focalMax)) focalMax = 0;
+	if (!isFinite(apertureMin)) apertureMin = 0;
+	if (!isFinite(apertureMax)) apertureMax = 0;
+	return {
+		id: slugify(idName),
+		maker,
+		model,
+		mounts,
+		cropFactor,
+		...aspectRatio === null ? {} : { aspectRatio },
+		type: typeStr,
+		focalMin,
+		focalMax,
+		apertureMin,
+		apertureMax,
+		distortion,
+		tca,
+		vignetting
+	};
+}
+function parseAspectRatio(text) {
+	if (!text) return null;
+	const parts = text.split(":").map(Number);
+	if (parts.length > 2) return null;
+	const value = parts.length === 2 ? parts[0] / parts[1] : parts[0];
+	if (!(value > 0) || !isFinite(value)) return null;
+	return Math.max(value, 1 / value);
+}
+function parseDistortion(attrs) {
+	const model = attr(attrs, "model");
+	const focal = parseFloat(attr(attrs, "focal") || "0");
+	if (!model) return null;
+	let k;
+	if (model === "poly3") k = [parseFloat(attr(attrs, "k1") || "0")];
+	else if (model === "poly5") k = [parseFloat(attr(attrs, "k1") || "0"), parseFloat(attr(attrs, "k2") || "0")];
+	else if (model === "ptlens") k = [
+		parseFloat(attr(attrs, "a") || "0"),
+		parseFloat(attr(attrs, "b") || "0"),
+		parseFloat(attr(attrs, "c") || "0")
+	];
+	else return null;
+	return {
+		focal,
+		model,
+		k
+	};
+}
+function parseTca(attrs) {
+	const model = attr(attrs, "model");
+	const focal = parseFloat(attr(attrs, "focal") || "0");
+	if (!model) return null;
+	let k;
+	if (model === "linear") k = [parseFloat(attr(attrs, "kr") || "1"), parseFloat(attr(attrs, "kb") || "1")];
+	else if (model === "poly3") k = [
+		parseFloat(attr(attrs, "br") || "0"),
+		parseFloat(attr(attrs, "cr") || "0"),
+		parseFloat(attr(attrs, "vr") || "1"),
+		parseFloat(attr(attrs, "bb") || "0"),
+		parseFloat(attr(attrs, "cb") || "0"),
+		parseFloat(attr(attrs, "vb") || "1")
+	];
+	else return null;
+	return {
+		focal,
+		model,
+		k
+	};
+}
+function parseVignetting(attrs) {
+	if (attr(attrs, "model") !== "pa") return null;
+	return {
+		focal: parseFloat(attr(attrs, "focal") || "0"),
+		aperture: parseFloat(attr(attrs, "aperture") || "0"),
+		distance: parseFloat(attr(attrs, "distance") || "1000"),
+		k: [
+			parseFloat(attr(attrs, "k1") || "0"),
+			parseFloat(attr(attrs, "k2") || "0"),
+			parseFloat(attr(attrs, "k3") || "0")
+		]
+	};
+}
+function extractText(xml, tag) {
+	return firstText(xml, untaggedElement(tag), englishElement(tag));
+}
+function extractEnglishText(xml, tag) {
+	return firstText(xml, englishElement(tag), untaggedElement(tag));
+}
+function extractAllText(xml, tag) {
+	return [...xml.matchAll(new RegExp(untaggedElement(tag), "g"))].map((m) => decodeEntities(m[1].trim()));
+}
+function untaggedElement(tag) {
+	return new RegExp(`<${tag}>([^<]+)</${tag}>`);
+}
+function englishElement(tag) {
+	return new RegExp(`<${tag}\\s+lang=["']en["'][^>]*>([^<]+)</${tag}>`);
+}
+function firstText(xml, ...patterns) {
+	for (const pattern of patterns) {
+		const match = xml.match(pattern);
+		if (match) return decodeEntities(match[1].trim());
+	}
+	return null;
+}
+const ENTITIES = {
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: "\"",
+	apos: "'"
+};
+function decodeEntities(s) {
+	return s.replace(/&(amp|lt|gt|quot|apos);/g, (_, name) => ENTITIES[name]);
+}
+function attr(str, name) {
+	const m = str.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`));
+	return m ? m[1] ?? m[2] : null;
+}
+function slugify(s) {
+	return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+//#endregion
+//#region src/storage.ts
+const DB_NAME = "safelight-lens-correction";
+const DB_VERSION = 2;
+const STORES = [
+	"embedded",
+	"lcp",
+	"lensfun"
+];
+let dbPromise = null;
+function openDb() {
+	if (dbPromise) return dbPromise;
+	dbPromise = new Promise((resolve) => {
+		if (typeof indexedDB === "undefined") {
+			resolve(null);
+			return;
+		}
+		const req = indexedDB.open(DB_NAME, DB_VERSION);
+		req.onupgradeneeded = () => {
+			const db = req.result;
+			for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+		};
+		req.onsuccess = () => resolve(req.result);
+		req.onerror = () => resolve(null);
+	});
+	return dbPromise;
+}
+async function idbGet(store, key) {
+	const db = await openDb();
+	if (!db) return null;
+	return new Promise((resolve) => {
+		try {
+			const req = db.transaction(store, "readonly").objectStore(store).get(key);
+			req.onsuccess = () => resolve(req.result ?? null);
+			req.onerror = () => resolve(null);
+		} catch {
+			resolve(null);
+		}
+	});
+}
+async function idbSet(store, key, value) {
+	const db = await openDb();
+	if (!db) return;
+	return new Promise((resolve) => {
+		try {
+			const tx = db.transaction(store, "readwrite");
+			tx.objectStore(store).put(value, key);
+			tx.oncomplete = () => resolve();
+			tx.onerror = () => resolve();
+		} catch {
+			resolve();
+		}
+	});
+}
+async function idbGetAll(store) {
+	const db = await openDb();
+	if (!db) return [];
+	return new Promise((resolve) => {
+		try {
+			const req = db.transaction(store, "readonly").objectStore(store).getAll();
+			req.onsuccess = () => resolve(req.result ?? []);
+			req.onerror = () => resolve([]);
+		} catch {
+			resolve([]);
+		}
+	});
+}
+async function idbHas(store, key) {
+	const db = await openDb();
+	if (!db) return false;
+	return new Promise((resolve) => {
+		try {
+			const req = db.transaction(store, "readonly").objectStore(store).getKey(key);
+			req.onsuccess = () => resolve(req.result !== void 0);
+			req.onerror = () => resolve(false);
+		} catch {
+			resolve(false);
+		}
+	});
+}
+/** Every [key, value] pair in a store, in key order. */
+async function idbEntries(store) {
+	const db = await openDb();
+	if (!db) return [];
+	return new Promise((resolve) => {
+		try {
+			const tx = db.transaction(store, "readonly");
+			const keys = tx.objectStore(store).getAllKeys();
+			const values = tx.objectStore(store).getAll();
+			tx.oncomplete = () => resolve(keys.result.map((k, i) => [String(k), values.result[i]]));
+			tx.onerror = () => resolve([]);
+		} catch {
+			resolve([]);
+		}
+	});
+}
+async function idbDelete(store, key) {
+	const db = await openDb();
+	if (!db) return;
+	return new Promise((resolve) => {
+		try {
+			const tx = db.transaction(store, "readwrite");
+			tx.objectStore(store).delete(key);
+			tx.oncomplete = () => resolve();
+			tx.onerror = () => resolve();
+		} catch {
+			resolve();
+		}
+	});
+}
+
+//#endregion
+//#region src/db/loader.ts
+const bundled = lens_profiles_default;
+let db = bundled;
+let loading = null;
+/** The database with imported lenses laid over the bundled ones. */
+function loadLensDb() {
+	loading ??= idbGetAll("lensfun").then((files) => {
+		db = mergeLenses(bundled, files.flatMap((f) => f.lenses));
+		return db;
+	});
+	return loading;
+}
+/** Synchronous access to the database; the bundled lenses until imports load. */
 function getCachedLensDb() {
 	return db;
 }
 /** Look up a lens by its Lensfun id (for a remembered or manually-picked choice). */
 function findLensById(id) {
 	return db.find((l) => l.id === id) ?? null;
+}
+/** Import a Lensfun XML file, replacing an earlier import of the same name.
+*  Returns its lenses as they now sit in the database (none when the file holds
+*  no calibrated lens) and how many it skipped for want of a calibration this
+*  reads. */
+async function importLensfunXml(fileName, xml) {
+	const { lenses, skipped } = buildLensDatabase([xml]);
+	if (lenses.length === 0) return {
+		lenses: [],
+		skipped
+	};
+	await idbSet("lensfun", fileName.toLowerCase(), {
+		name: fileName,
+		lenses
+	});
+	const imported = new Set(lenses.map(lensKey));
+	return {
+		lenses: (await reload()).filter((l) => imported.has(lensKey(l))),
+		skipped
+	};
+}
+async function importedLensFiles() {
+	return (await idbEntries("lensfun")).map(([key, f]) => ({
+		key,
+		name: f.name,
+		count: f.lenses.length
+	}));
+}
+/** Remove an imported file; a built-in lens it recalibrated gets its own back. */
+async function removeLensfunXml(key) {
+	await idbDelete("lensfun", key);
+	await reload();
+}
+function reload() {
+	loading = null;
+	return loadLensDb();
 }
 
 //#endregion
@@ -421836,83 +422314,6 @@ function tokenScore$1(exifNorm, dbNorm) {
 }
 
 //#endregion
-//#region src/storage.ts
-const DB_NAME = "safelight-lens-correction";
-const DB_VERSION = 1;
-const STORES = ["embedded", "lcp"];
-let dbPromise = null;
-function openDb() {
-	if (dbPromise) return dbPromise;
-	dbPromise = new Promise((resolve) => {
-		if (typeof indexedDB === "undefined") {
-			resolve(null);
-			return;
-		}
-		const req = indexedDB.open(DB_NAME, DB_VERSION);
-		req.onupgradeneeded = () => {
-			const db = req.result;
-			for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
-		};
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => resolve(null);
-	});
-	return dbPromise;
-}
-async function idbGet(store, key) {
-	const db = await openDb();
-	if (!db) return null;
-	return new Promise((resolve) => {
-		try {
-			const req = db.transaction(store, "readonly").objectStore(store).get(key);
-			req.onsuccess = () => resolve(req.result ?? null);
-			req.onerror = () => resolve(null);
-		} catch {
-			resolve(null);
-		}
-	});
-}
-async function idbSet(store, key, value) {
-	const db = await openDb();
-	if (!db) return;
-	return new Promise((resolve) => {
-		try {
-			const tx = db.transaction(store, "readwrite");
-			tx.objectStore(store).put(value, key);
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => resolve();
-		} catch {
-			resolve();
-		}
-	});
-}
-async function idbGetAll(store) {
-	const db = await openDb();
-	if (!db) return [];
-	return new Promise((resolve) => {
-		try {
-			const req = db.transaction(store, "readonly").objectStore(store).getAll();
-			req.onsuccess = () => resolve(req.result ?? []);
-			req.onerror = () => resolve([]);
-		} catch {
-			resolve([]);
-		}
-	});
-}
-async function idbHas(store, key) {
-	const db = await openDb();
-	if (!db) return false;
-	return new Promise((resolve) => {
-		try {
-			const req = db.transaction(store, "readonly").objectStore(store).getKey(key);
-			req.onsuccess = () => resolve(req.result !== void 0);
-			req.onerror = () => resolve(false);
-		} catch {
-			resolve(false);
-		}
-	});
-}
-
-//#endregion
 //#region src/features/embedded.ts
 const CACHE_VERSION = 2;
 function toEmbeddedCache(profile) {
@@ -421950,19 +422351,33 @@ async function resolveEmbedded(_api, photoId) {
 
 //#endregion
 //#region src/features/adobe-model.ts
-/** radius scale S such that rd = S · r (r = half-diagonal-normalized). */
-function radiusS(focalLengthX, aspect) {
-	if (!focalLengthX || focalLengthX <= 0) return 1;
-	return .5 * Math.sqrt(1 + 1 / (aspect * aspect)) / focalLengthX;
+/** Radius scale S such that the Adobe radius = S · r (r = half-diagonal-normalized). */
+function radiusS(entry, profile, shot) {
+	if (!(entry.focalLengthX > 0)) return 1;
+	const a = profile.imageAspect ?? Math.max(shot.aspect, 1 / shot.aspect);
+	const halfDiagPerLongSide = Math.hypot(a, 1) / (2 * a);
+	const crop = profile.sensorFormatFactor && shot.cropFactor ? profile.sensorFormatFactor / shot.cropFactor : 1;
+	return halfDiagPerLongSide / entry.focalLengthX * crop;
 }
-function convertDistortion(d, s) {
+function convertDistortion(e, s) {
+	const d = e.distortion;
 	if (!d) return null;
+	if (e.fisheye) return {
+		model: "adobeFisheye",
+		k: [d.k1, d.k2]
+	};
+	const s2 = s * s;
 	return {
 		model: "poly5",
-		k: [d.k1 * s * s, d.k2 * s * s * s * s]
+		k: [
+			d.k1 * s2,
+			d.k2 * s2 * s2,
+			d.k3 * s2 * s2 * s2
+		]
 	};
 }
-function convertVignette(v, s) {
+function convertVignette(e, s) {
+	const v = e.vignette;
 	if (!v) return null;
 	const s2 = s * s;
 	return { k: [
@@ -421971,39 +422386,105 @@ function convertVignette(v, s) {
 		v.a3 * s2 * s2 * s2
 	] };
 }
-function convertCa(c, s) {
+/** The poly3 stage holds b·rt² + c·rt + v, with rt = r · `rScale`. Adobe's r⁴
+*  term folds into r² by a least-squares fit over the frame (weighted by area,
+*  ∫r⁷/∫r⁵ = 3/4). */
+function convertCa(e, s, rScale) {
+	const c = e.ca;
 	if (!c) return null;
 	const s2 = s * s;
+	const fit = (k1, k2, scale) => scale * (k1 * s2 + .75 * k2 * s2 * s2) / (rScale * rScale);
+	const redScale = c.redScale ?? 1;
+	const blueScale = c.blueScale ?? 1;
 	return {
 		model: "poly3",
 		k: [
-			c.redK1 * s2,
+			fit(c.redK1, c.redK2, redScale),
 			0,
-			1,
-			c.blueK1 * s2,
+			redScale,
+			fit(c.blueK1, c.blueK2, blueScale),
 			0,
-			1
+			blueScale
 		]
 	};
 }
-/** Pick / interpolate the calibration entry nearest the shot's focal length. */
-function pickEntry(entries, focal) {
-	if (entries.length === 0) return null;
-	if (entries.length === 1 || !focal) return entries[0];
-	return entries.reduce((best, e) => Math.abs((e.focal || focal) - focal) < Math.abs((best.focal || focal) - focal) ? e : best);
+/** Raw calibrations for a raw file and camera-JPEG ones for a JPEG, when the
+*  profile has that kind; every entry otherwise. */
+function entriesForShot(entries, raw) {
+	if (raw === void 0) return entries;
+	const own = entries.filter((e) => e.raw === void 0 || e.raw === raw);
+	return own.length > 0 ? own : entries;
 }
+const diopters = (metres) => metres && metres > 0 ? 1 / metres : 0;
+/** How far an entry's shooting conditions are from the shot's, for one kind:
+*  aperture in stops first (vignetting only), then focus distance. */
+function mismatch(e, kind, shot) {
+	return [kind === "vignette" && e.aperture > 0 && shot.aperture && shot.aperture > 0 ? Math.abs(Math.log2(e.aperture / shot.aperture)) : 0, Math.abs(diopters(e.distance) - diopters(shot.distance))];
+}
+/** The best-matching calibrations at the calibrated focal lengths either side
+*  of the shot's, held at the nearest outside the calibrated range. */
+function bracket(entries, kind, shot) {
+	const cands = entries.filter((e) => e[kind]);
+	if (cands.length === 0) return null;
+	const bestAt = (focal) => cands.filter((e) => e.focal === focal).reduce((best, e) => {
+		const [a, b] = mismatch(e, kind, shot);
+		const [ba, bb] = mismatch(best, kind, shot);
+		return a < ba || a === ba && b < bb ? e : best;
+	});
+	const focals = [...new Set(cands.map((e) => e.focal))].sort((a, b) => a - b);
+	const f = shot.focal;
+	if (!(f > 0) || focals.length === 1) {
+		const only = bestAt(f > 0 ? focals.reduce((n, x) => Math.abs(x - f) < Math.abs(n - f) ? x : n) : focals[0]);
+		return {
+			lo: only,
+			hi: only,
+			t: 0
+		};
+	}
+	const below = focals.filter((x) => x <= f);
+	const above = focals.filter((x) => x >= f);
+	const loF = below.length ? below[below.length - 1] : above[0];
+	const hiF = above.length ? above[0] : loF;
+	return {
+		lo: bestAt(loF),
+		hi: bestAt(hiF),
+		t: hiF > loF ? (f - loF) / (hiF - loF) : 0
+	};
+}
+const lerp = (a, b, t) => a.map((v, i) => v + ((b[i] ?? 0) - v) * t);
 /** Convert an Adobe profile to a ResolvedProfile for a given shot. */
-function adobeToResolved(profile, focal, aspect, source) {
-	const entry = pickEntry(profile.entries, focal);
-	if (!entry) return null;
-	const s = radiusS(entry.focalLengthX, aspect);
+function adobeToResolved(profile, shot, source) {
+	const entries = entriesForShot(profile.entries, shot.raw);
+	const S = (e) => radiusS(e, profile, shot);
+	const dist = bracket(entries, "distortion", shot);
+	const nearest = dist && (dist.t < .5 ? dist.lo : dist.hi);
+	const rScale = nearest?.fisheye ? S(nearest) : 1;
+	let distortion = null;
+	if (dist && nearest) if (nearest.fisheye || dist.lo.fisheye !== dist.hi.fisheye) distortion = convertDistortion(nearest, S(nearest) / rScale);
+	else {
+		const lo = convertDistortion(dist.lo, S(dist.lo));
+		const hi = convertDistortion(dist.hi, S(dist.hi));
+		distortion = {
+			model: "poly5",
+			k: lerp(lo.k, hi.k, dist.t)
+		};
+	}
+	const ca = bracket(entries, "ca", shot);
+	const tca = ca && {
+		model: "poly3",
+		k: lerp(convertCa(ca.lo, S(ca.lo), rScale).k, convertCa(ca.hi, S(ca.hi), rScale).k, ca.t)
+	};
+	const vig = bracket(entries, "vignette", shot);
+	const vignetting = vig && { k: lerp(convertVignette(vig.lo, S(vig.lo)).k, convertVignette(vig.hi, S(vig.hi)).k, vig.t) };
+	if (!distortion && !tca && !vignetting) return null;
 	return {
 		lensId: `${source}:${profile.make}:${profile.lens}`,
 		lensName: profile.lens || `${profile.make} ${profile.model}`,
 		source,
-		distortion: convertDistortion(entry.distortion, s),
-		tca: convertCa(entry.ca, s),
-		vignetting: convertVignette(entry.vignette, s)
+		...rScale !== 1 && { radiusScale: rScale },
+		distortion,
+		tca,
+		vignetting
 	};
 }
 
@@ -422023,17 +422504,13 @@ function readNum(el, name) {
 		return isFinite(v) ? v : void 0;
 	}
 }
-function readStr(root, name) {
-	const el = findByLocal(root, name);
-	if (el?.textContent?.trim()) return el.textContent.trim();
-	if (root instanceof Element) {
-		for (const a of Array.from(root.attributes)) if (localName(a) === name) return a.value;
+/** The first value of a property in document order, written either as an
+*  element or as an attribute (Adobe's own profiles use attributes). */
+function readStr(doc, name) {
+	for (const el of Array.from(doc.getElementsByTagName("*"))) {
+		for (const a of Array.from(el.attributes)) if (localName(a) === name && a.value.trim()) return a.value.trim();
+		if (localName(el) === name && el.textContent?.trim()) return el.textContent.trim();
 	}
-}
-function findByLocal(root, name) {
-	const all = root.getElementsByTagName?.("*") ?? [];
-	for (const el of Array.from(all)) if (localName(el) === name) return el;
-	return null;
 }
 function elementsByLocal(root, name) {
 	const all = root.getElementsByTagName("*");
@@ -422057,8 +422534,24 @@ function ancestorNum(el, name) {
 		p = p.parentElement;
 	}
 }
-function entryKey(focal, aperture) {
-	return `${focal.toFixed(2)}|${aperture.toFixed(2)}`;
+function ancestorStr(el, name) {
+	for (let p = el.parentElement; p; p = p.parentElement) {
+		for (const a of Array.from(p.attributes)) if (localName(a) === name) return a.value.trim();
+		for (const c of Array.from(p.children)) if (localName(c) === name) return c.textContent?.trim();
+	}
+}
+/** The shooting conditions a model element was calibrated at, from the
+*  description it sits in. ApertureValue is APEX: f-number = 2^(Av/2). */
+function conditionsOf(m) {
+	const apex = ancestorNum(m, "ApertureValue");
+	const distance = ancestorNum(m, "FocusDistance") ?? 0;
+	const raw = ancestorStr(m, "CameraRawProfile")?.toLowerCase();
+	return {
+		focal: ancestorNum(m, "FocalLength") ?? 0,
+		aperture: apex === void 0 ? 0 : Math.pow(2, apex / 2),
+		...distance > 0 && { distance },
+		...raw !== void 0 && { raw: raw === "true" }
+	};
 }
 function parseLcp(xml) {
 	let doc;
@@ -422070,29 +422563,37 @@ function parseLcp(xml) {
 	if (!doc || doc.getElementsByTagName("parsererror").length > 0) return null;
 	const make = readStr(doc, "Make") ?? "";
 	const model = readStr(doc, "Model") ?? "";
-	const lens = readStr(doc, "Lens") ?? readStr(doc, "LensPrettyName") ?? "";
+	const lensPrettyName = readStr(doc, "LensPrettyName");
+	const lens = readStr(doc, "Lens") ?? lensPrettyName ?? "";
+	const sensorFormatFactor = parseFloat(readStr(doc, "SensorFormatFactor") ?? "");
+	const width = parseFloat(readStr(doc, "ImageWidth") ?? "");
+	const length = parseFloat(readStr(doc, "ImageLength") ?? "");
 	const byKey = /* @__PURE__ */ new Map();
-	const ensure = (focal, aperture, focalLengthX) => {
-		const k = entryKey(focal, aperture);
+	const ensure = (m) => {
+		const at = conditionsOf(m);
+		const fx = readModelNum(m, "FocalLengthX") ?? 0;
+		const k = [
+			at.focal,
+			at.aperture,
+			at.distance ?? 0,
+			at.raw
+		].join("|");
 		let e = byKey.get(k);
 		if (!e) {
 			e = {
-				focal,
-				aperture,
-				focalLengthX
+				...at,
+				focalLengthX: fx
 			};
 			byKey.set(k, e);
-		} else if (!e.focalLengthX && focalLengthX) e.focalLengthX = focalLengthX;
+		} else if (!e.focalLengthX && fx) e.focalLengthX = fx;
 		return e;
 	};
-	for (const m of [...elementsByLocal(doc, "PerspectiveModel"), ...elementsByLocal(doc, "FisheyeModel")]) {
-		const focal = ancestorNum(m, "FocalLength") ?? 0;
-		const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-		const fx = readModelNum(m, "FocalLengthX") ?? 0;
+	for (const [name, fisheye] of [["PerspectiveModel", false], ["FisheyeModel", true]]) for (const m of elementsByLocal(doc, name)) {
 		const k1 = readModelNum(m, "RadialDistortParam1");
 		const k2 = readModelNum(m, "RadialDistortParam2");
 		const k3 = readModelNum(m, "RadialDistortParam3");
-		const e = ensure(focal, aperture, fx);
+		const e = ensure(m);
+		if (fisheye) e.fisheye = true;
 		if (k1 !== void 0 || k2 !== void 0 || k3 !== void 0) e.distortion = {
 			k1: k1 ?? 0,
 			k2: k2 ?? 0,
@@ -422100,38 +422601,39 @@ function parseLcp(xml) {
 		};
 	}
 	for (const m of elementsByLocal(doc, "VignetteModel")) {
-		const focal = ancestorNum(m, "FocalLength") ?? 0;
-		const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-		const fx = readModelNum(m, "FocalLengthX") ?? 0;
 		const a1 = readModelNum(m, "VignetteModelParam1");
 		const a2 = readModelNum(m, "VignetteModelParam2");
 		const a3 = readModelNum(m, "VignetteModelParam3");
-		if (a1 !== void 0 || a2 !== void 0 || a3 !== void 0) ensure(focal, aperture, fx).vignette = {
+		if (a1 !== void 0 || a2 !== void 0 || a3 !== void 0) ensure(m).vignette = {
 			a1: a1 ?? 0,
 			a2: a2 ?? 0,
 			a3: a3 ?? 0
 		};
 	}
-	const caRed = elementsByLocal(doc, "ChromaticRedGreenModel");
-	const caBlue = elementsByLocal(doc, "ChromaticBlueGreenModel");
-	for (const m of caRed) {
-		const e = ensure(ancestorNum(m, "FocalLength") ?? 0, ancestorNum(m, "ApertureValue") ?? 0, readModelNum(m, "FocalLengthX") ?? 0);
+	for (const m of elementsByLocal(doc, "ChromaticRedGreenModel")) {
+		const e = ensure(m);
+		const redScale = readModelNum(m, "ScaleFactor");
 		e.ca = {
+			...e.ca ?? {
+				blueK1: 0,
+				blueK2: 0
+			},
 			redK1: readModelNum(m, "RadialDistortParam1") ?? 0,
 			redK2: readModelNum(m, "RadialDistortParam2") ?? 0,
-			blueK1: e.ca?.blueK1 ?? 0,
-			blueK2: e.ca?.blueK2 ?? 0
+			...redScale !== void 0 && { redScale }
 		};
 	}
-	for (const m of caBlue) {
-		const e = ensure(ancestorNum(m, "FocalLength") ?? 0, ancestorNum(m, "ApertureValue") ?? 0, readModelNum(m, "FocalLengthX") ?? 0);
-		const k1 = readModelNum(m, "RadialDistortParam1") ?? 0;
-		const k2 = readModelNum(m, "RadialDistortParam2") ?? 0;
+	for (const m of elementsByLocal(doc, "ChromaticBlueGreenModel")) {
+		const e = ensure(m);
+		const blueScale = readModelNum(m, "ScaleFactor");
 		e.ca = {
-			redK1: e.ca?.redK1 ?? 0,
-			redK2: e.ca?.redK2 ?? 0,
-			blueK1: k1,
-			blueK2: k2
+			...e.ca ?? {
+				redK1: 0,
+				redK2: 0
+			},
+			blueK1: readModelNum(m, "RadialDistortParam1") ?? 0,
+			blueK2: readModelNum(m, "RadialDistortParam2") ?? 0,
+			...blueScale !== void 0 && { blueScale }
 		};
 	}
 	const entries = [...byKey.values()].filter((e) => e.distortion || e.vignette || e.ca);
@@ -422141,11 +422643,14 @@ function parseLcp(xml) {
 		make,
 		model,
 		lens: lens || model,
+		...lensPrettyName && { lensPrettyName },
+		...sensorFormatFactor > 0 && { sensorFormatFactor },
+		...width > 0 && length > 0 && { imageAspect: Math.max(width, length) / Math.min(width, length) },
 		entries
 	};
 }
 function profileKey(p) {
-	return `${p.make}|${p.lens}`.toLowerCase();
+	return `${p.make}|${p.model}|${p.lens}`.toLowerCase();
 }
 /** Parse + store an .lcp into the library. Returns the profile, or null. */
 async function importLcpFile(file) {
@@ -422157,7 +422662,18 @@ async function importLcpFile(file) {
 async function lcpLibrary() {
 	return idbGetAll("lcp");
 }
-function lcpPresetImporter(_api) {
+async function importedLcps() {
+	return (await idbEntries("lcp")).map(([key, p]) => ({
+		key,
+		lens: p.lens || p.model,
+		model: p.model
+	}));
+}
+function removeLcp(key) {
+	return idbDelete("lcp", key);
+}
+/** `onImported` lets the panel pick the new profile up. */
+function lcpPresetImporter(onImported) {
 	return {
 		id: `${EXT_ID}.lcp`,
 		label: "Adobe Lens Profile (.lcp)",
@@ -422165,6 +422681,7 @@ function lcpPresetImporter(_api) {
 		async parse(file) {
 			const p = await importLcpFile(file);
 			if (!p) return null;
+			onImported();
 			return {
 				name: `LCP: ${p.lens || p.model}`,
 				params: {}
@@ -422186,32 +422703,54 @@ function tokenScore(a, b) {
 	for (const t of at) if (bt.has(t) || [...bt].some((x) => x.includes(t) || t.includes(x))) m++;
 	return m / at.length;
 }
-/** Match the EXIF lens against the LCP library and convert for this shot. */
-async function resolveLcp(_api, exif, aspect) {
+function lensIdentity(name, make) {
+	const compact = (s) => s.toLowerCase().replace(/[^a-z0-9.]+/g, "");
+	const id = compact(name);
+	const maker = compact(make.split(/\s+/)[0] ?? "");
+	return maker && id.startsWith(maker) && id.length > maker.length ? id.slice(maker.length) : id;
+}
+function sameLens(p, exifLens) {
+	const target = lensIdentity(exifLens, p.make);
+	return [p.lens, p.lensPrettyName].some((n) => n && lensIdentity(n, p.make) === target);
+}
+function cameraAffinity(p, exif) {
+	const same = (a, b) => !!a && !!b && norm(a) === norm(b);
+	return same(p.model, exif.cameraModel) ? 2 : same(p.make, exif.cameraMake) ? 1 : 0;
+}
+function findProfile(lib, exif, fuzzy) {
 	const lens = exif.lens;
-	if (!lens) return null;
-	const lib = await lcpLibrary();
-	if (lib.length === 0) return null;
+	const exact = lib.filter((p) => sameLens(p, lens));
+	if (exact.length > 0) return exact.reduce((best, p) => cameraAffinity(p, exif) > cameraAffinity(best, exif) ? p : best);
+	if (!fuzzy) return null;
 	let best = null;
 	for (const p of lib) {
 		const name = p.lens || p.model;
 		if (!name) continue;
-		if (norm(name) === norm(lens)) {
-			best = {
-				p,
-				score: 1
-			};
-			break;
-		}
 		const score = tokenScore(lens, name);
 		if (!best || score > best.score) best = {
 			p,
 			score
 		};
 	}
-	if (!best || best.score < .6) return null;
+	return best && best.score >= .6 ? best.p : null;
+}
+/** Match the EXIF lens against the LCP library and convert for this shot. */
+async function resolveLcp(exif, shot) {
+	if (!exif.lens) return null;
+	const lib = await lcpLibrary();
+	if (lib.length === 0) return null;
+	const profile = findProfile(lib, exif, shot.fuzzy ?? false);
+	if (!profile) return null;
 	const focal = exif.focalLength ?? 0;
-	return adobeToResolved(best.p, focal, aspect, "lcp");
+	const focal35 = exif.focalLength35mm ?? 0;
+	return adobeToResolved(profile, {
+		focal,
+		aspect: shot.aspect,
+		aperture: exif.aperture,
+		distance: exif.subjectDistance,
+		cropFactor: focal > 0 && focal35 > 0 ? focal35 / focal : void 0,
+		raw: shot.raw
+	}, "lcp");
 }
 
 //#endregion
@@ -422386,10 +422925,14 @@ const distortionStage = {
     if (distModel == 1) {
       scl = 1.0 - distKA + distKA * rp2;
     } else if (distModel == 2) {
-      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2;
+      scl = 1.0 + distKA * rp2 + distKB * rp2 * rp2 + distKC * rp2 * rp2 * rp2;
     } else if (distModel == 3) {
       scl = distKA * rp2 * rp + distKB * rp2 + distKC * rp
           + (1.0 - distKA - distKB - distKC);
+    } else if (distModel == 4 && rp > 0.0) {
+      float fishTheta = atan(rp);
+      float fishTheta2 = fishTheta * fishTheta;
+      scl = fishTheta / rp * (1.0 + distKA * fishTheta2 + distKB * fishTheta2 * fishTheta2);
     }
     if (abs(distManual) > 0.001) {
       scl += distManual * 0.0003 * rr2;
@@ -422401,6 +422944,7 @@ const caStage = {
 	id: STAGE.ca,
 	name: "Lens Chromatic Aberration",
 	phase: "decode",
+	priority: 0,
 	uniforms: [{
 		key: "tcaModel",
 		glslType: "int",
@@ -422641,7 +423185,8 @@ function initController(a) {
 		state: defaultState(autoApply),
 		photoId: null,
 		status: null,
-		busy: false
+		busy: false,
+		imports: []
 	}));
 	for (const s of alwaysStages) api.registerProcessingStage(s);
 	unsubDevelop = api.stores.useDevelopStore.subscribe((s, prev) => {
@@ -422649,6 +423194,7 @@ function initController(a) {
 	});
 	loadLensDb().then(() => recompute());
 	recompute();
+	refreshImports();
 }
 function disposeController() {
 	unsubDevelop?.();
@@ -422671,6 +423217,26 @@ function currentPhoto() {
 	if (!id) return null;
 	return api.stores.useCatalogStore.getState().photos.find((p) => p.id === id) ?? null;
 }
+const RENDERED_FORMATS = /* @__PURE__ */ new Set([
+	"jpg",
+	"jpeg",
+	"png",
+	"tif",
+	"tiff",
+	"webp",
+	"heic",
+	"heif",
+	"avif",
+	"jxl",
+	"gif",
+	"bmp"
+]);
+/** Whether the photo is a raw file; undefined when it has no file name. */
+function isRawPhoto(photo) {
+	const ext = photo?.filename?.split(".").pop()?.toLowerCase();
+	return ext ? !RENDERED_FORMATS.has(ext) : void 0;
+}
+const embeddedEnabled = () => api.settings.get("embeddedCorrections", true);
 /** Displayed image aspect (W/H), accounting for EXIF orientation. */
 function photoAspect$1(photo) {
 	const w = typeof photo?.width === "number" ? photo.width : 0;
@@ -422682,7 +423248,9 @@ function photoAspect$1(photo) {
 	const H = swap ? w : h;
 	return H > 0 ? W / H : 1.5;
 }
-async function resolveProfile(state, exif, photoId, aspect) {
+async function resolveProfile(state, photo, aspect) {
+	const exif = photo?.exif ?? {};
+	const photoId = photo?.id ?? null;
 	if (state.mode !== "profile") return null;
 	const db = getCachedLensDb() ?? await loadLensDb();
 	if (state.lensId) {
@@ -422696,16 +423264,20 @@ async function resolveProfile(state, exif, photoId, aspect) {
 			if (lens) return resolveForLens(lens, exif, aspect);
 		}
 	}
-	const order = state.pref === "lensfun" ? ["lensfun"] : state.pref === "embedded" ? ["embedded", "lensfun"] : state.pref === "lcp" ? ["lcp", "lensfun"] : [
+	const order = state.pref === "lensfun" ? ["lensfun"] : state.pref === "embedded" ? ["embedded", "lensfun"] : state.pref === "lcp" ? ["lcp", "lensfun"] : embeddedEnabled() ? [
 		"embedded",
 		"lcp",
 		"lensfun"
-	];
+	] : ["lcp", "lensfun"];
 	for (const src of order) if (src === "embedded" && photoId) {
 		const e = await resolveEmbedded(api, photoId);
 		if (e) return e;
 	} else if (src === "lcp") {
-		const l = await resolveLcp(api, exif, aspect);
+		const l = await resolveLcp(exif, {
+			aspect,
+			raw: isRawPhoto(photo),
+			fuzzy: state.pref === "lcp"
+		});
 		if (l) return l;
 	} else if (src === "lensfun") {
 		const res = resolveForPhoto(exif, db, aspect);
@@ -422720,11 +423292,11 @@ async function recompute() {
 	const photo = currentPhoto();
 	const exif = photo?.exif ?? {};
 	const aspect = photoAspect$1(photo);
-	const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}`;
+	const key = `${photoId}|${aspect}|${state.mode}|${state.pref}|${state.lensId}|${embeddedEnabled()}`;
 	let profile;
 	if (key === cacheKey) profile = cacheProfile;
 	else {
-		profile = await resolveProfile(state, exif, photoId, aspect);
+		profile = await resolveProfile(state, photo, aspect);
 		if (seq !== resolveSeq) return;
 		if (api.stores.useDevelopStore.getState().photoId !== photoId) return;
 		cacheKey = key;
@@ -422762,7 +423334,7 @@ function updateState(patch, commitLabel) {
 		...patch
 	};
 	api.stores.useDevelopStore.getState().setDynParam(STATE_KEY, next);
-	recompute().then(() => {
+	return recompute().then(() => {
 		if (commitLabel) api.stores.useDevelopStore.getState().commitEdit(commitLabel);
 	});
 }
@@ -422836,6 +423408,10 @@ function clearAutoCa() {
 	}, "Clear Auto CA");
 	uiStore.setState({ status: null });
 }
+/** Import a lens profile file: a Lensfun .xml database file or an Adobe .lcp. */
+function importLensProfile(file) {
+	return file.name.toLowerCase().endsWith(".xml") ? importLensfun(file) : importLcp(file);
+}
 /** Import an Adobe Lens Profile and prefer LCP corrections for this photo. */
 async function importLcp(file) {
 	uiStore.setState({
@@ -422852,14 +423428,17 @@ async function importLcp(file) {
 			return;
 		}
 		cacheKey = "";
-		updateState({
+		await updateState({
 			mode: "profile",
 			pref: "lcp",
 			lensId: null
 		}, "Import LCP");
+		await refreshImports();
+		const name = profile.lens || profile.model;
+		const applied = uiStore.getState().source === "lcp";
 		uiStore.setState({
 			busy: false,
-			status: `Imported: ${profile.lens || profile.model}`
+			status: applied ? `Imported: ${name}` : `Imported ${name}. It doesn't match this photo's lens.`
 		});
 	} catch {
 		uiStore.setState({
@@ -422867,6 +423446,64 @@ async function importLcp(file) {
 			status: "LCP import failed."
 		});
 	}
+}
+const lensCount = (n) => n === 1 ? "1 lens" : `${n} lenses`;
+/** Import a Lensfun XML file into the lens database and re-resolve the photo. */
+async function importLensfun(file) {
+	uiStore.setState({
+		busy: true,
+		status: `Importing ${file.name}…`
+	});
+	try {
+		const { lenses, skipped } = await importLensfunXml(file.name, await file.text());
+		const unread = skipped > 0 ? ` ${lensCount(skipped)} skipped: their calibration format isn't supported.` : "";
+		if (lenses.length === 0) {
+			uiStore.setState({
+				busy: false,
+				status: `No usable lenses in this file.${unread}`
+			});
+			return;
+		}
+		cacheKey = "";
+		await recompute();
+		await refreshImports();
+		uiStore.setState({
+			busy: false,
+			status: `Imported ${lensCount(lenses.length)} from ${file.name}.${unread}`
+		});
+	} catch {
+		uiStore.setState({
+			busy: false,
+			status: "Lens file import failed."
+		});
+	}
+}
+async function refreshImports() {
+	const [files, lcps] = await Promise.all([importedLensFiles(), importedLcps()]);
+	const imports = [...files.map((f) => ({
+		kind: "xml",
+		key: f.key,
+		label: `${f.name} (${lensCount(f.count)})`
+	})), ...lcps.map((p) => ({
+		kind: "lcp",
+		key: p.key,
+		label: p.model ? `${p.lens} (${p.model})` : p.lens
+	}))];
+	uiStore.setState({ imports });
+}
+/** Remove an imported profile file and re-resolve the photo without it. */
+async function removeImport(item) {
+	await (item.kind === "xml" ? removeLensfunXml(item.key) : removeLcp(item.key));
+	cacheKey = "";
+	await recompute();
+	await refreshImports();
+	uiStore.setState({ status: `Removed ${item.label}.` });
+}
+/** An .lcp arrived through the Presets panel's import. */
+function lcpImportedElsewhere() {
+	cacheKey = "";
+	recompute();
+	refreshImports();
 }
 
 //#endregion
@@ -423136,9 +423773,11 @@ function createLensPanel(api) {
 		const source = useUI((s) => s.source);
 		const status = useUI((s) => s.status);
 		const busy = useUI((s) => s.busy);
+		const imports = useUI((s) => s.imports);
+		const [importsOpen, setImportsOpen] = React.useState(false);
 		const [pickerOpen, setPickerOpen] = React.useState(false);
 		const [advancedOpen, setAdvancedOpen] = React.useState(false);
-		const lcpInputRef = React.useRef(null);
+		const importInputRef = React.useRef(null);
 		const profileBlock = state.mode === "profile" ? h("div", {
 			key: "profile",
 			style: {
@@ -423174,17 +423813,17 @@ function createLensPanel(api) {
 		}, "Edit"), h(ui.Button, {
 			variant: "ghost",
 			size: "sm",
-			onClick: () => lcpInputRef.current && lcpInputRef.current.click(),
-			title: "Import an Adobe Lens Profile (.lcp)"
-		}, "LCP"), h("input", {
-			ref: lcpInputRef,
+			onClick: () => importInputRef.current && importInputRef.current.click(),
+			title: "Import a lens profile: Adobe .lcp or Lensfun .xml"
+		}, "Import"), h("input", {
+			ref: importInputRef,
 			type: "file",
-			accept: ".lcp",
+			accept: ".lcp,.xml",
 			style: { display: "none" },
 			onChange: (e) => {
 				const f = e.target.files && e.target.files[0];
 				e.target.value = "";
-				if (f) importLcp(f);
+				if (f) importLensProfile(f);
 			}
 		})), !detectedName ? h("div", { style: {
 			fontSize: 10,
@@ -423206,7 +423845,34 @@ function createLensPanel(api) {
 			label: "Auto Crop",
 			checked: state.autoCrop,
 			onChange: () => updateState({ autoCrop: !state.autoCrop }, "Lens Toggle")
-		})) : null;
+		}), imports.length > 0 ? h(ui.Button, {
+			variant: "ghost",
+			size: "sm",
+			full: true,
+			onClick: () => setImportsOpen(!importsOpen)
+		}, (importsOpen ? "▾ " : "▸ ") + `Imported profiles (${imports.length})`) : null, importsOpen ? imports.map((item) => h("div", {
+			key: `${item.kind}:${item.key}`,
+			style: {
+				display: "flex",
+				alignItems: "center",
+				gap: 4,
+				...subtext
+			}
+		}, h("span", {
+			style: {
+				flex: 1,
+				overflow: "hidden",
+				textOverflow: "ellipsis",
+				whiteSpace: "nowrap"
+			},
+			title: item.label
+		}, item.label), h(ui.Button, {
+			variant: "ghost",
+			size: "sm",
+			disabled: busy,
+			onClick: () => void removeImport(item),
+			title: `Remove ${item.label}`
+		}, "Remove"))) : null) : null;
 		const sliderBlock = state.mode !== "off" ? h("div", {
 			key: "sliders",
 			style: {
@@ -423710,7 +424376,10 @@ async function readDngProfile(dir, fileName, photo) {
 	if (!blob) return null;
 	const corrections = parseOpcodeList(blob);
 	if (!corrections.distortion && !corrections.vignette) return null;
-	return adobeToResolved(buildEmbeddedProfile(photo, corrections), Number(photo.exif?.focalLength ?? 0), photoAspect(photo), "embedded");
+	return adobeToResolved(buildEmbeddedProfile(photo, corrections), {
+		focal: Number(photo.exif?.focalLength ?? 0),
+		aspect: photoAspect(photo)
+	}, "embedded");
 }
 /** Read a RAF's correction tables from its header and the start of its CFA
 *  section only — never the whole (often 100 MB+) file. */
@@ -423788,7 +424457,7 @@ function activate(api) {
 		}
 	});
 	api.registerCatalogHooks(embeddedCatalogHook(api));
-	api.registerPresetImporter(lcpPresetImporter(api));
+	api.registerPresetImporter(lcpPresetImporter(lcpImportedElsewhere));
 	offSettings = api.settings.onChange(() => void recompute());
 }
 function deactivate() {

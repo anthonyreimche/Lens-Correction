@@ -29,6 +29,13 @@ describe("distortion binding", () => {
     expect(scaleAt(profile({ model: "poly5", k: [-0.08, 0.02] }), r)).toBeCloseTo(lensfunPoly5(-0.08, 0.02, r), 12);
   });
 
+  it.each([0.5, 1])("poly5 [k1, k2, k3] adds k3·r⁶ at r = %f", (r) => {
+    expect(scaleAt(profile({ model: "poly5", k: [-0.08, 0.02, -0.004] }), r)).toBeCloseTo(
+      lensfunPoly5(-0.08, 0.02, r) - 0.004 * r ** 6,
+      12,
+    );
+  });
+
   it.each([0.5, 1])("ptlens [a, b, c] scales by a·r³ + b·r² + c·r + 1 - a - b - c at r = %f", (r) => {
     const [a, b, c] = [0.012, -0.07, 0.027];
     expect(scaleAt(profile({ model: "ptlens", k: [a, b, c] }), r)).toBeCloseTo(lensfunPtlens(a, b, c, r), 12);

@@ -56,10 +56,12 @@ export interface LensfunCamera {
 // ─── Resolved profile — interpolated coefficients ready for the shader ───────
 
 export interface ResolvedDistortion {
-  model: DistortionModel;
+  model: DistortionModel | "adobeFisheye";
   /** As Lensfun defines them — poly3: [k1] for 1 - k1 + k1·r²;
    *  poly5: [k1, k2] for 1 + k1·r² + k2·r⁴; ptlens: [a, b, c] for
-   *  a·r³ + b·r² + c·r + 1 - a - b - c — each the factor an output point's
+   *  a·r³ + b·r² + c·r + 1 - a - b - c; poly5 may carry a third k3·r⁶ (Adobe
+   *  profiles); adobeFisheye: [k1, k2] for (θ/r)·(1 + k1·θ² + k2·θ⁴), θ = atan(r)
+   *  — each the factor an output point's
    *  radius is scaled by to find its source sample. */
   k: number[];
 }

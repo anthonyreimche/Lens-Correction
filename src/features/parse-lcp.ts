@@ -5,10 +5,10 @@
 // local name and ignores prefixes. Imported profiles are stored in the LCP
 // library (IndexedDB) and matched live, like Lensfun.
 
-import type { SafelightAPI, PresetImporterContribution } from "../types/safelight";
+import type { PresetImporterContribution } from "../types/safelight";
 import { EXT_ID } from "../params";
 import type { AdobeProfile, AdobeEntry } from "./adobe-model";
-import { idbSet, idbGetAll } from "../storage";
+import { idbDelete, idbEntries, idbGetAll, idbSet } from "../storage";
 
 function localName(node: { localName?: string | null; nodeName: string }): string {
   return node.localName || node.nodeName.split(":").pop() || node.nodeName;
@@ -31,20 +31,16 @@ function readNum(el: Element, name: string): number | undefined {
   return undefined;
 }
 
-function readStr(root: ParentNode, name: string): string | undefined {
-  const el = findByLocal(root, name);
-  if (el?.textContent?.trim()) return el.textContent.trim();
-  // also try as an attribute somewhere near the root
-  if (root instanceof Element) {
-    for (const a of Array.from(root.attributes)) if (localName(a) === name) return a.value;
+/** The first value of a property in document order, written either as an
+ *  element or as an attribute (Adobe's own profiles use attributes). */
+function readStr(doc: Document, name: string): string | undefined {
+  for (const el of Array.from(doc.getElementsByTagName("*"))) {
+    for (const a of Array.from(el.attributes)) {
+      if (localName(a) === name && a.value.trim()) return a.value.trim();
+    }
+    if (localName(el) === name && el.textContent?.trim()) return el.textContent.trim();
   }
   return undefined;
-}
-
-function findByLocal(root: ParentNode, name: string): Element | null {
-  const all = (root as Element).getElementsByTagName?.("*") ?? [];
-  for (const el of Array.from(all)) if (localName(el) === name) return el;
-  return null;
 }
 
 function elementsByLocal(root: Document | Element, name: string): Element[] {
@@ -74,8 +70,26 @@ function ancestorNum(el: Element, name: string): number | undefined {
   return undefined;
 }
 
-function entryKey(focal: number, aperture: number): string {
-  return `${focal.toFixed(2)}|${aperture.toFixed(2)}`;
+function ancestorStr(el: Element, name: string): string | undefined {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    for (const a of Array.from(p.attributes)) if (localName(a) === name) return a.value.trim();
+    for (const c of Array.from(p.children)) if (localName(c) === name) return c.textContent?.trim();
+  }
+  return undefined;
+}
+
+/** The shooting conditions a model element was calibrated at, from the
+ *  description it sits in. ApertureValue is APEX: f-number = 2^(Av/2). */
+function conditionsOf(m: Element): Pick<AdobeEntry, "focal" | "aperture" | "distance" | "raw"> {
+  const apex = ancestorNum(m, "ApertureValue");
+  const distance = ancestorNum(m, "FocusDistance") ?? 0;
+  const raw = ancestorStr(m, "CameraRawProfile")?.toLowerCase();
+  return {
+    focal: ancestorNum(m, "FocalLength") ?? 0,
+    aperture: apex === undefined ? 0 : Math.pow(2, apex / 2),
+    ...(distance > 0 && { distance }),
+    ...(raw !== undefined && { raw: raw === "true" }),
+  };
 }
 
 export function parseLcp(xml: string): AdobeProfile | null {
@@ -89,69 +103,71 @@ export function parseLcp(xml: string): AdobeProfile | null {
 
   const make = readStr(doc, "Make") ?? "";
   const model = readStr(doc, "Model") ?? "";
-  const lens = readStr(doc, "Lens") ?? readStr(doc, "LensPrettyName") ?? "";
+  const lensPrettyName = readStr(doc, "LensPrettyName");
+  const lens = readStr(doc, "Lens") ?? lensPrettyName ?? "";
+  const sensorFormatFactor = parseFloat(readStr(doc, "SensorFormatFactor") ?? "");
+  const width = parseFloat(readStr(doc, "ImageWidth") ?? "");
+  const length = parseFloat(readStr(doc, "ImageLength") ?? "");
 
   const byKey = new Map<string, AdobeEntry>();
-  const ensure = (focal: number, aperture: number, focalLengthX: number): AdobeEntry => {
-    const k = entryKey(focal, aperture);
+  const ensure = (m: Element): AdobeEntry => {
+    const at = conditionsOf(m);
+    const fx = readModelNum(m, "FocalLengthX") ?? 0;
+    const k = [at.focal, at.aperture, at.distance ?? 0, at.raw].join("|");
     let e = byKey.get(k);
     if (!e) {
-      e = { focal, aperture, focalLengthX };
+      e = { ...at, focalLengthX: fx };
       byKey.set(k, e);
-    } else if (!e.focalLengthX && focalLengthX) {
-      e.focalLengthX = focalLengthX;
+    } else if (!e.focalLengthX && fx) {
+      e.focalLengthX = fx;
     }
     return e;
   };
 
-  // Distortion (rectilinear) — also the carrier of FocalLengthX + focal/aperture.
-  for (const m of [
-    ...elementsByLocal(doc, "PerspectiveModel"),
-    ...elementsByLocal(doc, "FisheyeModel"),
-  ]) {
-    const focal = ancestorNum(m, "FocalLength") ?? 0;
-    const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-    const fx = readModelNum(m, "FocalLengthX") ?? 0;
-    const k1 = readModelNum(m, "RadialDistortParam1");
-    const k2 = readModelNum(m, "RadialDistortParam2");
-    const k3 = readModelNum(m, "RadialDistortParam3");
-    const e = ensure(focal, aperture, fx);
-    if (k1 !== undefined || k2 !== undefined || k3 !== undefined) {
-      e.distortion = { k1: k1 ?? 0, k2: k2 ?? 0, k3: k3 ?? 0 };
+  // Distortion — also the carrier of FocalLengthX.
+  for (const [name, fisheye] of [["PerspectiveModel", false], ["FisheyeModel", true]] as const) {
+    for (const m of elementsByLocal(doc, name)) {
+      const k1 = readModelNum(m, "RadialDistortParam1");
+      const k2 = readModelNum(m, "RadialDistortParam2");
+      const k3 = readModelNum(m, "RadialDistortParam3");
+      const e = ensure(m);
+      if (fisheye) e.fisheye = true;
+      if (k1 !== undefined || k2 !== undefined || k3 !== undefined) {
+        e.distortion = { k1: k1 ?? 0, k2: k2 ?? 0, k3: k3 ?? 0 };
+      }
     }
   }
 
   // Vignette.
   for (const m of elementsByLocal(doc, "VignetteModel")) {
-    const focal = ancestorNum(m, "FocalLength") ?? 0;
-    const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-    const fx = readModelNum(m, "FocalLengthX") ?? 0;
     const a1 = readModelNum(m, "VignetteModelParam1");
     const a2 = readModelNum(m, "VignetteModelParam2");
     const a3 = readModelNum(m, "VignetteModelParam3");
     if (a1 !== undefined || a2 !== undefined || a3 !== undefined) {
-      ensure(focal, aperture, fx).vignette = { a1: a1 ?? 0, a2: a2 ?? 0, a3: a3 ?? 0 };
+      ensure(m).vignette = { a1: a1 ?? 0, a2: a2 ?? 0, a3: a3 ?? 0 };
     }
   }
 
   // Chromatic aberration (red↔green, blue↔green radial scale models).
-  const caRed = elementsByLocal(doc, "ChromaticRedGreenModel");
-  const caBlue = elementsByLocal(doc, "ChromaticBlueGreenModel");
-  for (const m of caRed) {
-    const focal = ancestorNum(m, "FocalLength") ?? 0;
-    const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-    const e = ensure(focal, aperture, readModelNum(m, "FocalLengthX") ?? 0);
-    const k1 = readModelNum(m, "RadialDistortParam1") ?? 0;
-    const k2 = readModelNum(m, "RadialDistortParam2") ?? 0;
-    e.ca = { redK1: k1, redK2: k2, blueK1: e.ca?.blueK1 ?? 0, blueK2: e.ca?.blueK2 ?? 0 };
+  for (const m of elementsByLocal(doc, "ChromaticRedGreenModel")) {
+    const e = ensure(m);
+    const redScale = readModelNum(m, "ScaleFactor");
+    e.ca = {
+      ...(e.ca ?? { blueK1: 0, blueK2: 0 }),
+      redK1: readModelNum(m, "RadialDistortParam1") ?? 0,
+      redK2: readModelNum(m, "RadialDistortParam2") ?? 0,
+      ...(redScale !== undefined && { redScale }),
+    };
   }
-  for (const m of caBlue) {
-    const focal = ancestorNum(m, "FocalLength") ?? 0;
-    const aperture = ancestorNum(m, "ApertureValue") ?? 0;
-    const e = ensure(focal, aperture, readModelNum(m, "FocalLengthX") ?? 0);
-    const k1 = readModelNum(m, "RadialDistortParam1") ?? 0;
-    const k2 = readModelNum(m, "RadialDistortParam2") ?? 0;
-    e.ca = { redK1: e.ca?.redK1 ?? 0, redK2: e.ca?.redK2 ?? 0, blueK1: k1, blueK2: k2 };
+  for (const m of elementsByLocal(doc, "ChromaticBlueGreenModel")) {
+    const e = ensure(m);
+    const blueScale = readModelNum(m, "ScaleFactor");
+    e.ca = {
+      ...(e.ca ?? { redK1: 0, redK2: 0 }),
+      blueK1: readModelNum(m, "RadialDistortParam1") ?? 0,
+      blueK2: readModelNum(m, "RadialDistortParam2") ?? 0,
+      ...(blueScale !== undefined && { blueScale }),
+    };
   }
 
   const entries = [...byKey.values()].filter(
@@ -160,13 +176,22 @@ export function parseLcp(xml: string): AdobeProfile | null {
   if (entries.length === 0) return null;
   entries.sort((a, b) => a.focal - b.focal);
 
-  return { make, model, lens: lens || model, entries };
+  return {
+    make,
+    model,
+    lens: lens || model,
+    ...(lensPrettyName && { lensPrettyName }),
+    ...(sensorFormatFactor > 0 && { sensorFormatFactor }),
+    ...(width > 0 && length > 0 && { imageAspect: Math.max(width, length) / Math.min(width, length) }),
+    entries,
+  };
 }
 
 // ─── Library storage ─────────────────────────────────────────────────────────
 
+// One profile per lens per camera: a profile made on another body is kept beside it.
 function profileKey(p: AdobeProfile): string {
-  return `${p.make}|${p.lens}`.toLowerCase();
+  return `${p.make}|${p.model}|${p.lens}`.toLowerCase();
 }
 
 /** Parse + store an .lcp into the library. Returns the profile, or null. */
@@ -182,9 +207,25 @@ export async function lcpLibrary(): Promise<AdobeProfile[]> {
   return idbGetAll<AdobeProfile>("lcp");
 }
 
+export interface ImportedLcpInfo {
+  key: string;
+  lens: string;
+  model: string;
+}
+
+export async function importedLcps(): Promise<ImportedLcpInfo[]> {
+  const entries = await idbEntries<AdobeProfile>("lcp");
+  return entries.map(([key, p]) => ({ key, lens: p.lens || p.model, model: p.model }));
+}
+
+export function removeLcp(key: string): Promise<void> {
+  return idbDelete("lcp", key);
+}
+
 // ─── Preset importer registration (discovery affordance) ─────────────────────
 
-export function lcpPresetImporter(_api: SafelightAPI): PresetImporterContribution {
+/** `onImported` lets the panel pick the new profile up. */
+export function lcpPresetImporter(onImported: () => void): PresetImporterContribution {
   return {
     id: `${EXT_ID}.lcp`,
     label: "Adobe Lens Profile (.lcp)",
@@ -192,10 +233,11 @@ export function lcpPresetImporter(_api: SafelightAPI): PresetImporterContributio
     async parse(file: File) {
       const p = await importLcpFile(file);
       if (!p) return null;
+      onImported();
       // The profile now lives in the LCP library and is matched live; the photo
-      // is switched to prefer LCP from the panel's "Import .lcp" button. Routing a
-      // file through the Presets import just populates the library, so this
-      // returns no develop-param changes.
+      // is switched to prefer LCP from the panel's Import button. Routing a file
+      // through the Presets import just populates the library, so this returns
+      // no develop-param changes.
       return { name: `LCP: ${p.lens || p.model}`, params: {} };
     },
   };

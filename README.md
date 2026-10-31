@@ -17,8 +17,12 @@ when you want it.
   **DNG** files (the standardized DNG OpcodeList3: distortion + vignetting) and **Fujifilm RAF**
   files (distortion, vignetting, and lateral chromatic aberration); maker-note decoding for other
   proprietary RAWs (Sony ARW, Panasonic RW2, Micro-4/3) is in progress.
-- **Adobe Lens Profile (`.lcp`) import** — bring your existing Lightroom / Camera Raw lens
-  profiles.
+- **Import your own profiles** — the **Import** button next to the lens name takes an Adobe
+  Lens Profile (`.lcp`) from Lightroom / Camera Raw, or a Lensfun `.xml` database file. A
+  Lensfun file's lenses join the built-in list; a lens already in it takes your calibration.
+  Importing a file with the same name again replaces it, and **Imported profiles** lists
+  your imports with a button to remove each. LCP profiles are matched to the exact lens
+  name, use the raw or JPEG calibration to suit the photo, and support fisheye lenses.
 - **Auto chromatic aberration** — estimates and removes lateral CA directly from the image, no
   profile needed.
 - **Advanced defringe** — targeted purple and green fringe removal with eyedropper hue pickers,

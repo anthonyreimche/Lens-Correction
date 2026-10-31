@@ -26,6 +26,7 @@ import {
 } from "@/rendering/webgl/webgl.test-support";
 import { STAGE } from "@lc/params";
 import { alwaysStages } from "@lc/stages";
+import { distortionScale, shaderRadius, type DistortionUniforms } from "@lc/distortion";
 
 const W = 256;
 const H = 128;
@@ -179,6 +180,62 @@ function defringe([r0, g0, b0]: Rgb, amount: number, purpleHue: number, greenHue
 }
 
 // ── Specs ────────────────────────────────────────────────────────────────────
+
+describe("Lens Correction distortion", () => {
+  // SOFT is affine in the pixel index, so a bilinear tap anywhere inside the
+  // frame reads it exactly: sampling at uv reads f(uv·W − 0.5, uv·H − 0.5).
+  const soft = (u: number, v: number): Rgb => {
+    const x = u * W - 0.5;
+    const y = v * H - 0.5;
+    return [0.08 + (0.25 * x) / W, 0.18 + (0.12 * y) / H, 0.3 - (0.1 * x) / W];
+  };
+
+  function render(photo: Record<string, number>): Frame {
+    const stages = [...builtinStages(), ...(alwaysStages as ProcessingStageContribution[])];
+    return withRenderer({ stages, pipeline: OPEN_PROBE }, (r) => {
+      r.setImage(SOFT);
+      r.setContributedParams(photo);
+      r.setParams(identityParams({ processVersion: 2 }));
+      const frame = r.captureFloatFrame();
+      if (!frame) throw new Error("captureFloatFrame returned null");
+      return frame;
+    });
+  }
+
+  /** The largest gap between the frame and SOFT warped by `u` on the CPU. */
+  function maxError(frame: Frame, u: DistortionUniforms): number {
+    let max = 0;
+    for (let p = 0; p < W * H; p++) {
+      const cx = ((p % W) + 0.5) / W - 0.5;
+      const cy = (Math.floor(p / W) + 0.5) / H - 0.5;
+      const scl = distortionScale(u, shaderRadius(cx, cy, W / H));
+      const want = soft(0.5 + cx * scl, 0.5 + cy * scl);
+      for (let ch = 0; ch < 3; ch++) max = Math.max(max, Math.abs(frame.data[p * 4 + ch] - want[ch]));
+    }
+    return max;
+  }
+
+  const uniforms = (u: Omit<DistortionUniforms, "distManual">): DistortionUniforms => ({ ...u, distManual: 0 });
+  const bag = (u: DistortionUniforms) =>
+    Object.fromEntries(Object.entries(u).map(([k, v]) => [`${STAGE.distortion}.${k}`, v]));
+
+  it.each([
+    ["poly5 with an r⁶ term", uniforms({ distModel: 2, distKA: -0.12, distKB: 0.03, distKC: -0.06, distRScale: 1 })],
+    ["Adobe's fisheye model", uniforms({ distModel: 4, distKA: 0.05, distKB: -0.01, distKC: 0, distRScale: 1.5 })],
+  ])("warps the frame as the CPU mirror of %s does", (name, u) => {
+    const frame = render(bag(u));
+    const err = maxError(frame, u);
+    const untouched = maxError(frame, uniforms({ distModel: 0, distKA: 0, distKB: 0, distKC: 0, distRScale: 1 }));
+    console.log(`[lc-gpu] ${name}: max error ${err.toExponential(2)}; vs no warp ${untouched.toExponential(2)}`);
+    expect(untouched).toBeGreaterThan(1e-2);
+    expect(err).toBeLessThan(1e-3);
+  });
+
+  it("feels the r⁶ term", () => {
+    const u = uniforms({ distModel: 2, distKA: -0.12, distKB: 0.03, distKC: -0.06, distRScale: 1 });
+    expect(maxError(render(bag(u)), { ...u, distKC: 0 })).toBeGreaterThan(5e-3);
+  });
+});
 
 describe("Lens Correction in a mask", () => {
   it("runs the mask's manual vignetting on top of the photo's profile vignetting, inside the mask only", () => {

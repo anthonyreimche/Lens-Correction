@@ -67,8 +67,7 @@ describe("computeStageUniforms — radius scale", () => {
         lens: "EF 24-70",
         entries: [{ focal: 50, aperture: 4, focalLengthX: 1.4, distortion: { k1: -0.05, k2: 0.01, k3: 0 }, ca: { redK1: 1e-3, redK2: 0, blueK1: -2e-3, blueK2: 0 } }],
       },
-      50,
-      1.5,
+      { focal: 50, aspect: 1.5 },
       "lcp",
     )!;
     expect(lcp.radiusScale).toBeUndefined();

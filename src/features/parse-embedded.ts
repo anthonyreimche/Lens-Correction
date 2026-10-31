@@ -181,7 +181,7 @@ async function readDngProfile(
   if (!corrections.distortion && !corrections.vignette) return null;
 
   const profile = buildEmbeddedProfile(photo, corrections);
-  return adobeToResolved(profile, Number(photo.exif?.focalLength ?? 0), photoAspect(photo), "embedded");
+  return adobeToResolved(profile, { focal: Number(photo.exif?.focalLength ?? 0), aspect: photoAspect(photo) }, "embedded");
 }
 
 /** Read a RAF's correction tables from its header and the start of its CFA
