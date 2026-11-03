@@ -14,7 +14,7 @@
 // shoulder, so the frame is the colour the stages work on.
 
 import { describe, expect, it } from "vitest";
-import { defaultMaskAdjustments, type Mask } from "@/catalog/types";
+import { CURRENT_PROCESS_VERSION, defaultMaskAdjustments, type Mask } from "@/catalog/types";
 import type { ProcessingStageContribution } from "@/extensions/types";
 import {
   LINEAR_PROBE_PIPELINE,
@@ -144,7 +144,8 @@ function manualVignette(amount: number, x: number, y: number): number {
   return Math.min(Math.max(mn, 0), 4);
 }
 
-/** The defringe block, hue-targeted when a hue is set. */
+/** The defringe block, hue-targeted when a hue is set: it finds fringes on a
+ *  copy clipped to [0, 1] and desaturates the pixel itself. */
 function defringe([r0, g0, b0]: Rgb, amount: number, purpleHue: number, greenHue: number, hueRadius: number): Rgb {
   const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
   const [r, g, b] = [clamp01(r0), clamp01(g0), clamp01(b0)];
@@ -176,7 +177,8 @@ function defringe([r0, g0, b0]: Rgb, amount: number, purpleHue: number, greenHue
     fringeMag = clamp01((purpleish + greenish) * 4);
   }
   const suppress = clamp01((amount / 100) * fringeMag * (chroma * 8));
-  return [r + (lm - r) * suppress, g + (lm - g) * suppress, b + (lm - b) * suppress];
+  const own = 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0;
+  return [r0 + (own - r0) * suppress, g0 + (own - g0) * suppress, b0 + (own - b0) * suppress];
 }
 
 // ── Specs ────────────────────────────────────────────────────────────────────
@@ -272,5 +274,180 @@ describe("Lens Correction in a mask", () => {
     );
     expect(s.changeRms).toBeGreaterThan(1e-2);
     expect(s.max).toBeLessThan(1e-3);
+  });
+});
+
+// On process version 2 the image stays full range through every stage. A
+// downstream stage halves the frame, so a value past white upstream still reads
+// back under it. Defringe (effects, priority 100) runs after Vignette (50) and
+// Grain (60), whose darkening and noise pull clipped whites under 1 with unequal
+// channels, a fringe it rightly suppresses, so they stay off here.
+// A bare display stage that declares no space is the positive control: the host
+// clips ahead of it, so it must change the frame, or the scene doesn't reach the
+// effects phase over range and a pass proves nothing.
+describe("Lens Correction defringe on version 2", () => {
+  const V2 = { processVersion: CURRENT_PROCESS_VERSION };
+  const HALVE: ProcessingStageContribution = {
+    id: "test.halve",
+    name: "Halve",
+    phase: "output-encode",
+    priority: 1000,
+    space: { encoding: "perceptual" },
+    glsl: "c *= 0.5;",
+    uniforms: [],
+  };
+  const CLIPS_AHEAD: ProcessingStageContribution = {
+    id: "test.clips-ahead",
+    name: "Clips ahead",
+    phase: "effects",
+    glsl: "c = c;",
+    uniforms: [],
+  };
+  const df = (bag: Record<string, number>) =>
+    Object.fromEntries(Object.entries(bag).map(([k, v]) => [`${STAGE.defringe}.${k}`, v]));
+
+  /** Over-range values no fringe test finds once clipped to [0, 1]: every
+   *  channel past white, in purple, green and neutral order, and reds whose
+   *  green and blue sit below black. */
+  const UNFRINGED = floatImage(W, H, (x, y) => {
+    const u = x / (W - 1);
+    const v = y / (H - 1);
+    if (y < H / 4) return [1.3 + 0.4 * u, 1.4 + 0.3 * u, 1.5 + 0.4 * u];
+    if (y < H / 2) return [1.3 + 0.2 * u, 1.6 + 0.3 * u, 1.4 + 0.2 * u];
+    if (y < (3 * H) / 4) return [1.1 + 0.8 * u, 1.1 + 0.8 * u, 1.1 + 0.8 * u];
+    return [0.3 + 0.5 * u, -0.2 - 0.3 * v, -0.25 - 0.3 * v];
+  });
+
+  /** Purple fringes past white, and green ones past white and below black,
+   *  bright enough that their own luminance is past white too. */
+  const WIDE_FRINGES = floatImage(W, H, (x, y) => {
+    const u = x / (W - 1);
+    if (y < H / 2) return [1.4 + 0.2 * u, 0.8 + 0.1 * u, 1.7 + 0.2 * u];
+    return [0.4 + 0.2 * u, 1.5 + 0.3 * u, -0.05 - 0.15 * u];
+  });
+
+  function frame(
+    scene: ReturnType<typeof floatImage>,
+    photo: Record<string, number>,
+    over: Record<string, unknown>,
+    extra: ProcessingStageContribution[] = [],
+    signed = false,
+  ): Frame {
+    const stages = [...builtinStages(), ...(alwaysStages as ProcessingStageContribution[]), ...extra, ...(signed ? [] : [HALVE])];
+    return withRenderer({ stages, pipeline: OPEN_PROBE }, (r) => {
+      r.setImage(scene);
+      r.setContributedParams(photo);
+      r.setParams(identityParams(over));
+      const f = signed ? r.readFloatFrame("pre-output", Infinity, { encoding: "perceptual" }) : r.captureFloatFrame();
+      if (!f) throw new Error("the frame couldn't be read");
+      return f;
+    });
+  }
+
+  const differing = (a: Frame, b: Frame) => {
+    let n = 0;
+    for (let i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) n++;
+    return n;
+  };
+
+  it("leaves every pixel it doesn't suppress bit-exact, over range", () => {
+    const idle = df({ dfAmount: 0 });
+    const bare = frame(UNFRINGED, idle, V2);
+    const clipped = frame(UNFRINGED, idle, V2, [CLIPS_AHEAD]);
+    expect(differing(bare, clipped)).toBeGreaterThan(W * H * 0.1);
+    for (const photo of [
+      df({ dfAmount: 90 }),
+      df({ dfAmount: 90, dfPurpleHue: 275, dfGreenHue: 120, dfRadius: 60 }),
+    ]) {
+      expect(differing(frame(UNFRINGED, photo, V2), bare)).toBe(0);
+    }
+  });
+
+  // Read as the signed `c` the output stage receives: the default capture is
+  // half float clipped to [0, 1], which loses the greens below black and adds
+  // a half-float step to the model's input.
+  it("desaturates over-range fringes toward their own luminance, keeping their range", () => {
+    const amount = 90;
+    const off = frame(WIDE_FRINGES, df({ dfAmount: 0 }), V2, [], true);
+    const on = frame(WIDE_FRINGES, df({ dfAmount: amount }), V2, [], true);
+    let belowBlack = 0;
+    let max = 0;
+    let change = 0;
+    let pastWhite = 0;
+    for (let p = 0; p < W * H; p++) {
+      const o = p * 4;
+      const before: Rgb = [off.data[o], off.data[o + 1], off.data[o + 2]];
+      const want = defringe(before, amount, 0, 0, 50);
+      if (Math.max(...want) > 1) pastWhite++;
+      if (Math.min(...before) < 0) belowBlack++;
+      for (let ch = 0; ch < 3; ch++) {
+        max = Math.max(max, Math.abs(on.data[o + ch] - want[ch]));
+        change += (want[ch] - before[ch]) ** 2;
+      }
+    }
+    const changeRms = Math.sqrt(change / (W * H * 3));
+    console.log(`[lc-gpu] v2 over-range defringe: change rms ${changeRms.toExponential(2)}; max ${max.toExponential(2)}; ${pastWhite} px past white, ${belowBlack} in below black`);
+    expect(changeRms).toBeGreaterThan(1e-2);
+    expect(pastWhite).toBeGreaterThan(W * H * 0.5);
+    expect(belowBlack).toBeGreaterThan(W * H * 0.25);
+    expect(max).toBeLessThan(1e-3);
+  });
+});
+
+// Process version 1 photos keep the defringe they were edited with, which
+// clipped the pixel itself to [0, 1] once its gate opened. A stage ahead of it
+// widens the frame past both ends on either version, and the read is the
+// signed `c` the output stage receives, Vignette and Grain off: the default
+// capture clips to [0, 1] and would hide the clip. The scene holds no fringe,
+// so the open gate changes nothing but the clip.
+describe("Lens Correction defringe on version 1", () => {
+  const WIDEN: ProcessingStageContribution = {
+    id: "test.widen",
+    name: "Widen",
+    phase: "effects",
+    priority: 50,
+    space: { encoding: "perceptual" },
+    glsl: "c = c * 1.6 - 0.3;",
+    uniforms: [],
+  };
+  const NEUTRAL_AND_RED = floatImage(W, H, (x, y) => {
+    const u = x / (W - 1);
+    if (y < H / 2) return [0.05 + 0.9 * u, 0.05 + 0.9 * u, 0.05 + 0.9 * u];
+    return [0.2 + 0.7 * u, 0.02, 0.02];
+  });
+  const df = (amount: number) => ({ [`${STAGE.defringe}.dfAmount`]: amount });
+
+  function signedFrame(photo: Record<string, number>, processVersion: number): Frame {
+    const stages = [...builtinStages(), WIDEN, ...(alwaysStages as ProcessingStageContribution[])];
+    return withRenderer({ stages, pipeline: OPEN_PROBE }, (r) => {
+      r.setImage(NEUTRAL_AND_RED);
+      r.setContributedParams(photo);
+      r.setParams(identityParams({ processVersion }));
+      const f = r.readFloatFrame("pre-output", Infinity, { encoding: "perceptual" });
+      if (!f) throw new Error("readFloatFrame returned null");
+      return f;
+    });
+  }
+
+  it("clips the pixel to [0, 1] once the gate opens on version 1, and not on version 2", () => {
+    for (const version of [1, CURRENT_PROCESS_VERSION]) {
+      const bare = signedFrame(df(0), version);
+      const on = signedFrame(df(90), version);
+      let outside = 0;
+      let outsideAfter = 0;
+      let worst = 0;
+      for (let i = 0; i < bare.data.length; i++) {
+        if (i % 4 === 3) continue;
+        const v = bare.data[i];
+        if (v < 0 || v > 1) outside++;
+        if (on.data[i] < 0 || on.data[i] > 1) outsideAfter++;
+        worst = Math.max(worst, Math.abs(on.data[i] - (version === 1 ? Math.min(Math.max(v, 0), 1) : v)));
+      }
+      console.log(`[lc-gpu] v${version} defringe gate open: ${outside} values outside [0, 1] going in, ${outsideAfter} after, worst ${worst.toExponential(2)}`);
+      expect(outside).toBeGreaterThan(W * H * 0.1);
+      expect(worst).toBeLessThan(1e-6);
+      if (version === 1) expect(outsideAfter).toBe(0);
+      else expect(outsideAfter).toBe(outside);
+    }
   });
 });

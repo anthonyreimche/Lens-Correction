@@ -172,7 +172,9 @@ export const vignetteStage: ProcessingStageContribution = {
 // Phase-2 parity: amount-driven purple/green fringe desaturation, matching core
 // applyDefringe(). Phase 3 extends this with the hue-picker uniforms. The stage
 // is always registered, so it declares the display's own space (the host adds
-// no clip) and clips its input to [0, 1] only inside its amount gate.
+// no clip). It finds fringes on a copy clipped to [0, 1] and desaturates the
+// pixel itself, so the image keeps its full range. Photos on process version 1
+// keep the defringe they were edited with, which clipped the pixel itself.
 
 export const defringeStage: ProcessingStageContribution = {
   id: STAGE.defringe,
@@ -187,22 +189,27 @@ export const defringeStage: ProcessingStageContribution = {
   ],
   glsl: `
     if (dfAmount >= 0.001) {
+#if SL_PROCESS_VERSION >= 2
+      vec3 cd = clamp(c, 0.0, 1.0);
+#else
       c = clamp(c, 0.0, 1.0);
-      float lm = luma(c);
-      float chroma = length(c - vec3(lm));
-      float purpleish = max(0.0, c.b - c.r) + max(0.0, c.b - c.g);
-      float greenish = max(0.0, c.g - c.r) + max(0.0, c.g - c.b);
+      vec3 cd = c;
+#endif
+      float lm = luma(cd);
+      float chroma = length(cd - vec3(lm));
+      float purpleish = max(0.0, cd.b - cd.r) + max(0.0, cd.b - cd.g);
+      float greenish = max(0.0, cd.g - cd.r) + max(0.0, cd.g - cd.b);
       float fringeMag;
       if (dfPurpleHue > 0.5 || dfGreenHue > 0.5) {
         // Hue-targeted: weight each fringe family by proximity to a picked hue.
-        float mx = max(c.r, max(c.g, c.b));
-        float mn = min(c.r, min(c.g, c.b));
+        float mx = max(cd.r, max(cd.g, cd.b));
+        float mn = min(cd.r, min(cd.g, cd.b));
         float dl = mx - mn;
         float hue = 0.0;
         if (dl > 1e-5) {
-          if (mx == c.r) hue = mod((c.g - c.b) / dl, 6.0);
-          else if (mx == c.g) hue = (c.b - c.r) / dl + 2.0;
-          else hue = (c.r - c.g) / dl + 4.0;
+          if (mx == cd.r) hue = mod((cd.g - cd.b) / dl, 6.0);
+          else if (mx == cd.g) hue = (cd.b - cd.r) / dl + 2.0;
+          else hue = (cd.r - cd.g) / dl + 4.0;
           hue *= 60.0;
         }
         float tol = max(dfRadius, 1.0);
@@ -215,7 +222,7 @@ export const defringeStage: ProcessingStageContribution = {
         fringeMag = clamp((purpleish + greenish) * 4.0, 0.0, 1.0);
       }
       float suppress = clamp(dfAmount / 100.0 * fringeMag * (chroma * 8.0), 0.0, 1.0);
-      c = mix(c, vec3(lm), suppress);
+      c = mix(c, vec3(luma(c)), suppress);
     }
   `,
   // A mask's copy defringes again inside the mask with the mask's own amount and hues.

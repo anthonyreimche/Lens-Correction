@@ -6,6 +6,7 @@ vi.mock("./db/loader", () => ({
   loadLensDb: () => Promise.resolve([]),
   getCachedLensDb: () => [],
   findLensById: () => null,
+  importedLensFiles: () => Promise.resolve([]),
 }));
 
 function store<T>(initial: T): StoreApi<T> {
