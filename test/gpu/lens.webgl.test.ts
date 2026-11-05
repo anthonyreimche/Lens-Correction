@@ -14,7 +14,7 @@
 // shoulder, so the frame is the colour the stages work on.
 
 import { describe, expect, it } from "vitest";
-import { CURRENT_PROCESS_VERSION, defaultMaskAdjustments, type Mask } from "@/catalog/types";
+import { CURRENT_PROCESS_VERSION, DEFAULT_GRAIN, DEFAULT_VIGNETTE, defaultMaskAdjustments, type Mask } from "@/catalog/types";
 import type { ProcessingStageContribution } from "@/extensions/types";
 import {
   LINEAR_PROBE_PIPELINE,
@@ -25,7 +25,7 @@ import {
   type Frame,
 } from "@/rendering/webgl/webgl.test-support";
 import { STAGE } from "@lc/params";
-import { alwaysStages } from "@lc/stages";
+import { alwaysStages, defringeStage, defringeV1Stage, distortionStage, vignetteStage } from "@lc/stages";
 import { distortionScale, shaderRadius, type DistortionUniforms } from "@lc/distortion";
 
 const W = 256;
@@ -277,16 +277,24 @@ describe("Lens Correction in a mask", () => {
   });
 });
 
+/** Vignette darkening and coloured grain: in bright areas they leave unequal
+ *  channels a defringe after them reads as fringe. */
+const EFFECTS_ON = {
+  vignette: { ...DEFAULT_VIGNETTE, amount: -30 },
+  grain: { ...DEFAULT_GRAIN, amount: 100, color: 100 },
+};
+
 // On process version 2 the image stays full range through every stage. A
 // downstream stage halves the frame, so a value past white upstream still reads
-// back under it. Defringe (effects, priority 100) runs after Vignette (50) and
-// Grain (60), whose darkening and noise pull clipped whites under 1 with unequal
-// channels, a fringe it rightly suppresses, so they stay off here.
+// back under it. Defringe runs ahead of Vignette (50) and Grain (60), so they
+// stay on in the bit-exact test; a defringe at version 1's place, after them,
+// must find their false fringes there, or the test proves nothing about order.
 // A bare display stage that declares no space is the positive control: the host
 // clips ahead of it, so it must change the frame, or the scene doesn't reach the
 // effects phase over range and a pass proves nothing.
 describe("Lens Correction defringe on version 2", () => {
   const V2 = { processVersion: CURRENT_PROCESS_VERSION };
+  const V2_EFFECTS = { ...V2, ...EFFECTS_ON };
   const HALVE: ProcessingStageContribution = {
     id: "test.halve",
     name: "Halve",
@@ -350,17 +358,27 @@ describe("Lens Correction defringe on version 2", () => {
     return n;
   };
 
-  it("leaves every pixel it doesn't suppress bit-exact, over range", () => {
+  it("leaves every pixel it doesn't suppress bit-exact, over range, with Vignette and Grain on", () => {
     const idle = df({ dfAmount: 0 });
-    const bare = frame(UNFRINGED, idle, V2);
-    const clipped = frame(UNFRINGED, idle, V2, [CLIPS_AHEAD]);
+    const bare = frame(UNFRINGED, idle, V2_EFFECTS);
+    const clipped = frame(UNFRINGED, idle, V2_EFFECTS, [CLIPS_AHEAD]);
     expect(differing(bare, clipped)).toBeGreaterThan(W * H * 0.1);
-    for (const photo of [
-      df({ dfAmount: 90 }),
-      df({ dfAmount: 90, dfPurpleHue: 275, dfGreenHue: 120, dfRadius: 60 }),
-    ]) {
-      expect(differing(frame(UNFRINGED, photo, V2), bare)).toBe(0);
+    const settings = [{ dfAmount: 90 }, { dfAmount: 90, dfPurpleHue: 275, dfGreenHue: 120, dfRadius: 60 }];
+    for (const s of settings) {
+      expect(differing(frame(UNFRINGED, df(s), V2_EFFECTS), bare)).toBe(0);
     }
+    const late = {
+      ...defringeStage,
+      id: "test.defringe-late",
+      priority: 100,
+      produces: undefined,
+      mask: undefined,
+    } as ProcessingStageContribution;
+    const lateBag = (s: Record<string, number>) =>
+      Object.fromEntries(Object.entries(s).map(([k, v]) => [`${late.id}.${k}`, v]));
+    const n = differing(frame(UNFRINGED, { ...idle, ...lateBag(settings[0]) }, V2_EFFECTS, [late]), bare);
+    console.log(`[lc-gpu] v2 defringe after Vignette and Grain changes ${n} values`);
+    expect(n).toBeGreaterThan(W * H * 0.02);
   });
 
   // Read as the signed `c` the output stage receives: the default capture is
@@ -448,6 +466,46 @@ describe("Lens Correction defringe on version 1", () => {
       expect(worst).toBeLessThan(1e-6);
       if (version === 1) expect(outsideAfter).toBe(0);
       else expect(outsideAfter).toBe(outside);
+    }
+  });
+
+  // Before the split, one stage at priority 100 read the settings as its own
+  // uniforms. Version 1's stage reads them from the stage that owns them now;
+  // the frame must not move by a bit, with Vignette and Grain on ahead of it.
+  it("renders version 1 as the single defringe stage at priority 100 did, bit for bit", () => {
+    const single = {
+      ...defringeV1Stage,
+      id: STAGE.defringe,
+      uniforms: defringeStage.uniforms,
+      consumes: undefined,
+      glsl: defringeV1Stage.glsl.replace(/^\s*float \w+ = isv_\w+\.[xyzw];\n/gm, ""),
+    } as ProcessingStageContribution;
+    const render = (lens: ProcessingStageContribution[], photo: Record<string, number>): Frame =>
+      withRenderer({ stages: [...builtinStages(), ...lens], pipeline: OPEN_PROBE }, (r) => {
+        r.setImage(FRINGES);
+        r.setContributedParams(photo);
+        r.setParams(identityParams({ processVersion: 1, ...EFFECTS_ON }));
+        const f = r.readFloatFrame("pre-output", Infinity, { encoding: "perceptual" });
+        if (!f) throw new Error("readFloatFrame returned null");
+        return f;
+      });
+    const split = alwaysStages as ProcessingStageContribution[];
+    const before = [distortionStage, vignetteStage, single] as ProcessingStageContribution[];
+    const bag = (s: Record<string, number>) =>
+      Object.fromEntries(Object.entries(s).map(([k, v]) => [`${STAGE.defringe}.${k}`, v]));
+    const idle = render(split, bag({ dfAmount: 0 }));
+    for (const s of [{ dfAmount: 90 }, { dfAmount: 90, dfPurpleHue: 275, dfGreenHue: 120, dfRadius: 60 }]) {
+      const now = render(split, bag(s));
+      const was = render(before, bag(s));
+      let changed = 0;
+      let differ = 0;
+      for (let i = 0; i < now.data.length; i++) {
+        if (now.data[i] !== idle.data[i]) changed++;
+        if (now.data[i] !== was.data[i]) differ++;
+      }
+      console.log(`[lc-gpu] v1 defringe ${JSON.stringify(s)}: ${changed} values changed, ${differ} differ from the single stage`);
+      expect(changed).toBeGreaterThan(W * H * 0.1);
+      expect(differ).toBe(0);
     }
   });
 });

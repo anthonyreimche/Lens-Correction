@@ -16,6 +16,7 @@ export const STAGE = {
   ca: `${EXT_ID}.ca`,
   vignette: `${EXT_ID}.vignette`,
   defringe: `${EXT_ID}.defringe`,
+  defringeV1: `${EXT_ID}.defringe-v1`,
 } as const;
 
 // The single param-bag key holding the user's lens-correction intent for a

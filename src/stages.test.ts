@@ -1,13 +1,17 @@
 import { describe, it, expect } from "vitest";
 import type { ProcessingStageContribution, UniformDeclaration } from "./types/safelight";
-import { caStage, defringeStage, distortionStage, vignetteStage } from "./stages";
+import { alwaysStages, caStage, defringeStage, defringeV1Stage, distortionStage, vignetteStage } from "./stages";
 import { distortionUniforms } from "./distortion";
 import manifest from "../safelight.json";
 
-const stages = [distortionStage, caStage, vignetteStage, defringeStage];
+const stages = [distortionStage, caStage, vignetteStage, defringeStage, defringeV1Stage];
 
 function sources(stage: ProcessingStageContribution): { glsl: string; uniforms: UniformDeclaration[] }[] {
-  return [{ glsl: stage.glsl, uniforms: stage.uniforms }, ...(stage.passes ?? []).map((p) => ({ glsl: p.glsl, uniforms: p.uniforms ?? [] }))];
+  return [
+    { glsl: stage.glsl, uniforms: stage.uniforms },
+    ...(stage.passes ?? []).map((p) => ({ glsl: p.glsl, uniforms: p.uniforms ?? [] })),
+    ...(stage.produces ?? []).map((v) => ({ glsl: v.producer ?? "", uniforms: stage.uniforms })),
+  ];
 }
 
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/;
@@ -65,9 +69,10 @@ describe("display-phase stages", () => {
   });
 
   // Process version 1 photos keep the defringe they were edited with, which
-  // clipped the pixel itself to [0, 1] inside the gate.
+  // clipped the pixel itself to [0, 1] inside the gate. Its settings arrive as
+  // locals of the uniforms' names, so the block reads as it did.
   it("defringe clips the pixel on process version 1, as before the range fix", () => {
-    const v1 = forVersion(defringeStage.glsl, 1);
+    const v1 = forVersion(defringeV1Stage.glsl, 1).replace(V1_SETTINGS, "");
     expect(v1).toMatch(/^\s*c = clamp\(c, 0\.0, 1\.0\);\n\s*vec3 cd = c;$/m);
     // With cd the clipped c itself, luma(c) is lm and the shader is the old one.
     const asBefore = v1
@@ -78,29 +83,81 @@ describe("display-phase stages", () => {
     expect(squash(asBefore)).toBe(squash(DEFRINGE_BEFORE_RANGE_FIX));
   });
 
-  it("defringe gives version 3 the version 2 path, one directive per line", () => {
-    const src = defringeStage.glsl;
-    expect(src).toContain("#if SL_PROCESS_VERSION >= 2");
-    expect(forVersion(src, 3)).toBe(forVersion(src, 2));
-    for (const line of src.split("\n").filter((l) => l.trim().startsWith("#"))) {
-      expect(line.trim()).toMatch(/^(#if SL_PROCESS_VERSION >= 2|#else|#endif)$/);
-    }
-  });
+  it.each([defringeStage, defringeV1Stage].map((s) => [s.name, s] as const))(
+    "%s gives version 3 the version 2 path, one directive per line",
+    (_, stage) => {
+      const src = stage.glsl;
+      expect(src).toMatch(/#if SL_PROCESS_VERSION (>= 2|< 2)/);
+      expect(forVersion(src, 3)).toBe(forVersion(src, 2));
+      for (const line of src.split("\n").filter((l) => l.trim().startsWith("#"))) {
+        expect(line.trim()).toMatch(/^(#if SL_PROCESS_VERSION (>= 2|< 2)|#else|#endif)$/);
+      }
+    },
+  );
 
   it("needs Safelight 3.2.0, the first to define SL_PROCESS_VERSION", () => {
     expect(manifest.minAppVersion).toBe("3.2.0");
   });
 });
 
+// Vignette (50) and Grain (60) darken and add coloured noise to bright areas,
+// which a defringe after them reads as fringe. Version 2 defringes ahead of
+// them; version 1 keeps the order its photos were edited with. Priority holds
+// for every photo, so each order is a stage of its own, and on each version one
+// of the two compiles to nothing.
+describe("effects order", () => {
+  const EFFECTS_VIGNETTE = 50;
+
+  it("defringes ahead of Vignette and Grain on version 2 and later", () => {
+    expect(defringeStage.phase).toBe("effects");
+    expect(defringeStage.priority).toBeLessThan(EFFECTS_VIGNETTE);
+    expect(forVersion(defringeStage.glsl, 1).trim()).toBe("");
+  });
+
+  it("keeps version 1's defringe after them, at priority 100", () => {
+    expect(defringeV1Stage.phase).toBe("effects");
+    expect(defringeV1Stage.priority).toBe(100);
+    expect(forVersion(defringeV1Stage.glsl, 2).trim()).toBe("");
+    expect(forVersion(defringeV1Stage.glsl, 3).trim()).toBe("");
+  });
+
+  // Saved edits, presets and masks hold the defringe settings under the
+  // original stage's id, so that stage keeps the id and the keys, and hands
+  // their values to the version 1 stage, which has no keys of its own.
+  it("drives both from the one set of settings under the original id", () => {
+    expect(defringeStage.id).toBe("com.safelight.lens-correction.defringe");
+    expect(defringeV1Stage.id).not.toBe(defringeStage.id);
+    expect(defringeV1Stage.uniforms).toEqual([]);
+    const keys = defringeStage.uniforms.map((u) => u.key);
+    expect(keys).toEqual(["dfAmount", "dfPurpleHue", "dfGreenHue", "dfRadius"]);
+    expect(defringeStage.produces).toHaveLength(1);
+    const [handed] = defringeStage.produces!;
+    expect(handed.glslType).toBe("vec4");
+    expect(handed.producer?.replace(/\s+/g, "")).toBe(`vec4(${keys.join(",")})`);
+    expect(defringeV1Stage.consumes).toEqual([handed.name]);
+    const locals = [...forVersion(defringeV1Stage.glsl, 1).matchAll(V1_SETTINGS)].map((m) => [m[1], m[2], m[3]]);
+    expect(locals).toEqual(keys.map((k, i) => [k, handed.name, "xyzw"[i]]));
+  });
+
+  it("registers the producer ahead of the stage that reads it", () => {
+    const at = (id: string) => alwaysStages.findIndex((s) => s.id === id);
+    expect(at(defringeStage.id)).toBeGreaterThanOrEqual(0);
+    expect(at(defringeV1Stage.id)).toBeGreaterThan(at(defringeStage.id));
+  });
+});
+
+/** A version 1 setting read from the inter-stage variable: name, variable, component. */
+const V1_SETTINGS = /^\s*float (\w+) = isv_(\w+)\.([xyzw]);\n/gm;
+
 /** The source as the host's GLSL preprocessor leaves it for a photo at
- *  `version`: the `#if SL_PROCESS_VERSION >= n` branches resolved and the
- *  directive lines gone. */
+ *  `version`: the `#if SL_PROCESS_VERSION >= n` and `< n` branches resolved
+ *  and the directive lines gone. */
 function forVersion(src: string, version: number): string {
   const taking: boolean[] = [];
   const out: string[] = [];
   for (const line of src.split("\n")) {
-    const open = /^\s*#if SL_PROCESS_VERSION >= (\d+)\s*$/.exec(line);
-    if (open) taking.push(version >= Number(open[1]));
+    const open = /^\s*#if SL_PROCESS_VERSION (>=|<) (\d+)\s*$/.exec(line);
+    if (open) taking.push(open[1] === ">=" ? version >= Number(open[2]) : version < Number(open[2]));
     else if (/^\s*#else\s*$/.test(line)) taking.push(!taking.pop());
     else if (/^\s*#endif\s*$/.test(line)) taking.pop();
     else if (taking.every(Boolean)) out.push(line);
@@ -153,6 +210,11 @@ describe("masks", () => {
   it("leaves distortion and chromatic aberration to the photo", () => {
     expect(distortionStage.mask).toBeUndefined();
     expect(caStage.mask).toBeUndefined();
+  });
+
+  // Mask copies run on version 2 and later only, where its body is empty.
+  it("gives version 1's defringe no mask copies", () => {
+    expect(defringeV1Stage.mask).toBeUndefined();
   });
 });
 

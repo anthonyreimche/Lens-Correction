@@ -138,7 +138,7 @@ export function createLensPanel(api: SafelightAPI) {
     });
   }
 
-  // ── Manual lens picker dialog ──
+  // ── Manual lens picker dialogue ──
   function PickerDialog(props: { onClose: () => void }) {
     const [query, setQuery] = React.useState("");
     const [db, setDb] = React.useState(getCachedLensDb() ?? ([] as LensfunLens[]));

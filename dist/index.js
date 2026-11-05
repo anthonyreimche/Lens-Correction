@@ -72,7 +72,8 @@ const STAGE = {
 	distortion: `${EXT_ID}.distortion`,
 	ca: `${EXT_ID}.ca`,
 	vignette: `${EXT_ID}.vignette`,
-	defringe: `${EXT_ID}.defringe`
+	defringe: `${EXT_ID}.defringe`,
+	defringeV1: `${EXT_ID}.defringe-v1`
 };
 const STATE_KEY = `${EXT_ID}:state`;
 function defaultState(autoApply) {
@@ -423093,10 +423094,41 @@ const vignetteStage = {
   `,
 	mask: { maskable: true }
 };
+const DEFRINGE_SETTINGS = "lensCorrectionDefringe";
+const DEFRINGE_BODY = `
+      float lm = luma(cd);
+      float chroma = length(cd - vec3(lm));
+      float purpleish = max(0.0, cd.b - cd.r) + max(0.0, cd.b - cd.g);
+      float greenish = max(0.0, cd.g - cd.r) + max(0.0, cd.g - cd.b);
+      float fringeMag;
+      if (dfPurpleHue > 0.5 || dfGreenHue > 0.5) {
+        // Hue-targeted: weight each fringe family by proximity to a picked hue.
+        float mx = max(cd.r, max(cd.g, cd.b));
+        float mn = min(cd.r, min(cd.g, cd.b));
+        float dl = mx - mn;
+        float hue = 0.0;
+        if (dl > 1e-5) {
+          if (mx == cd.r) hue = mod((cd.g - cd.b) / dl, 6.0);
+          else if (mx == cd.g) hue = (cd.b - cd.r) / dl + 2.0;
+          else hue = (cd.r - cd.g) / dl + 4.0;
+          hue *= 60.0;
+        }
+        float tol = max(dfRadius, 1.0);
+        float pd = abs(hue - dfPurpleHue); pd = min(pd, 360.0 - pd);
+        float gd = abs(hue - dfGreenHue); gd = min(gd, 360.0 - gd);
+        float wP = dfPurpleHue > 0.5 ? clamp(1.0 - pd / tol, 0.0, 1.0) : 0.0;
+        float wG = dfGreenHue > 0.5 ? clamp(1.0 - gd / tol, 0.0, 1.0) : 0.0;
+        fringeMag = clamp((purpleish * wP + greenish * wG) * 4.0, 0.0, 1.0);
+      } else {
+        fringeMag = clamp((purpleish + greenish) * 4.0, 0.0, 1.0);
+      }
+      float suppress = clamp(dfAmount / 100.0 * fringeMag * (chroma * 8.0), 0.0, 1.0);
+      c = mix(c, vec3(luma(c)), suppress);`;
 const defringeStage = {
 	id: STAGE.defringe,
 	name: "Lens Defringe",
 	phase: "effects",
+	priority: 0,
 	space: { encoding: "perceptual" },
 	uniforms: [
 		{
@@ -423121,46 +423153,47 @@ const defringeStage = {
 		}
 	],
 	glsl: `
+#if SL_PROCESS_VERSION >= 2
+    if (dfAmount >= 0.001) {
+      vec3 cd = clamp(c, 0.0, 1.0);${DEFRINGE_BODY}
+    }
+#endif
+  `,
+	produces: [{
+		name: DEFRINGE_SETTINGS,
+		glslType: "vec4",
+		producer: "vec4(dfAmount, dfPurpleHue, dfGreenHue, dfRadius)"
+	}],
+	mask: { maskable: true }
+};
+const defringeV1Stage = {
+	id: STAGE.defringeV1,
+	name: "Lens Defringe (version 1)",
+	phase: "effects",
+	priority: 100,
+	space: { encoding: "perceptual" },
+	uniforms: [],
+	consumes: [DEFRINGE_SETTINGS],
+	glsl: `
+#if SL_PROCESS_VERSION < 2
+    float dfAmount = isv_${DEFRINGE_SETTINGS}.x;
+    float dfPurpleHue = isv_${DEFRINGE_SETTINGS}.y;
+    float dfGreenHue = isv_${DEFRINGE_SETTINGS}.z;
+    float dfRadius = isv_${DEFRINGE_SETTINGS}.w;
     if (dfAmount >= 0.001) {
       c = clamp(c, 0.0, 1.0);
-      float lm = luma(c);
-      float chroma = length(c - vec3(lm));
-      float purpleish = max(0.0, c.b - c.r) + max(0.0, c.b - c.g);
-      float greenish = max(0.0, c.g - c.r) + max(0.0, c.g - c.b);
-      float fringeMag;
-      if (dfPurpleHue > 0.5 || dfGreenHue > 0.5) {
-        // Hue-targeted: weight each fringe family by proximity to a picked hue.
-        float mx = max(c.r, max(c.g, c.b));
-        float mn = min(c.r, min(c.g, c.b));
-        float dl = mx - mn;
-        float hue = 0.0;
-        if (dl > 1e-5) {
-          if (mx == c.r) hue = mod((c.g - c.b) / dl, 6.0);
-          else if (mx == c.g) hue = (c.b - c.r) / dl + 2.0;
-          else hue = (c.r - c.g) / dl + 4.0;
-          hue *= 60.0;
-        }
-        float tol = max(dfRadius, 1.0);
-        float pd = abs(hue - dfPurpleHue); pd = min(pd, 360.0 - pd);
-        float gd = abs(hue - dfGreenHue); gd = min(gd, 360.0 - gd);
-        float wP = dfPurpleHue > 0.5 ? clamp(1.0 - pd / tol, 0.0, 1.0) : 0.0;
-        float wG = dfGreenHue > 0.5 ? clamp(1.0 - gd / tol, 0.0, 1.0) : 0.0;
-        fringeMag = clamp((purpleish * wP + greenish * wG) * 4.0, 0.0, 1.0);
-      } else {
-        fringeMag = clamp((purpleish + greenish) * 4.0, 0.0, 1.0);
-      }
-      float suppress = clamp(dfAmount / 100.0 * fringeMag * (chroma * 8.0), 0.0, 1.0);
-      c = mix(c, vec3(lm), suppress);
+      vec3 cd = c;${DEFRINGE_BODY}
     }
-  `,
-	mask: { maskable: true }
+#endif
+  `
 };
 /** Stages always registered (cheap inline corrections). The CA stage is
 *  registered on demand (its prepass shouldn't run when CA is inactive). */
 const alwaysStages = [
 	distortionStage,
 	vignetteStage,
-	defringeStage
+	defringeStage,
+	defringeV1Stage
 ];
 
 //#endregion

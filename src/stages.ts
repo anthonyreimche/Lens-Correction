@@ -170,31 +170,23 @@ export const vignetteStage: ProcessingStageContribution = {
 
 // ─── Defringe (effects) ─────────────────────────────────────────────────────
 // Phase-2 parity: amount-driven purple/green fringe desaturation, matching core
-// applyDefringe(). Phase 3 extends this with the hue-picker uniforms. The stage
-// is always registered, so it declares the display's own space (the host adds
-// no clip). It finds fringes on a copy clipped to [0, 1] and desaturates the
-// pixel itself, so the image keeps its full range. Photos on process version 1
-// keep the defringe they were edited with, which clipped the pixel itself.
+// applyDefringe(). Phase 3 extends this with the hue-picker uniforms. The stages
+// are always registered, so they declare the display's own space (the host adds
+// no clip). Defringe finds fringes on a copy clipped to [0, 1] and desaturates
+// the pixel itself, so the image keeps its full range. Photos on process
+// version 1 keep the defringe they were edited with, which clipped the pixel
+// itself.
+//
+// Version 2 defringes ahead of the effects' Vignette (50) and Grain (60), whose
+// darkening and grain colour in bright areas it would otherwise read as fringe.
+// Version 1 keeps its place after them. Priority holds for every photo, so the
+// two places are two stages, and on each version one of them compiles to
+// nothing. The first keeps the original id and so the settings saved edits,
+// presets and masks hold; it hands their values to the second.
 
-export const defringeStage: ProcessingStageContribution = {
-  id: STAGE.defringe,
-  name: "Lens Defringe",
-  phase: "effects",
-  space: { encoding: "perceptual" },
-  uniforms: [
-    { key: "dfAmount", glslType: "float", default: 0 },
-    { key: "dfPurpleHue", glslType: "float", default: 0 }, // 0 = off (use default purple detection)
-    { key: "dfGreenHue", glslType: "float", default: 0 }, // 0 = off (use default green detection)
-    { key: "dfRadius", glslType: "float", default: 50 }, // hue tolerance, degrees-ish
-  ],
-  glsl: `
-    if (dfAmount >= 0.001) {
-#if SL_PROCESS_VERSION >= 2
-      vec3 cd = clamp(c, 0.0, 1.0);
-#else
-      c = clamp(c, 0.0, 1.0);
-      vec3 cd = c;
-#endif
+const DEFRINGE_SETTINGS = "lensCorrectionDefringe";
+
+const DEFRINGE_BODY = `
       float lm = luma(cd);
       float chroma = length(cd - vec3(lm));
       float purpleish = max(0.0, cd.b - cd.r) + max(0.0, cd.b - cd.g);
@@ -222,11 +214,54 @@ export const defringeStage: ProcessingStageContribution = {
         fringeMag = clamp((purpleish + greenish) * 4.0, 0.0, 1.0);
       }
       float suppress = clamp(dfAmount / 100.0 * fringeMag * (chroma * 8.0), 0.0, 1.0);
-      c = mix(c, vec3(luma(c)), suppress);
+      c = mix(c, vec3(luma(c)), suppress);`;
+
+export const defringeStage: ProcessingStageContribution = {
+  id: STAGE.defringe,
+  name: "Lens Defringe",
+  phase: "effects",
+  priority: 0,
+  space: { encoding: "perceptual" },
+  uniforms: [
+    { key: "dfAmount", glslType: "float", default: 0 },
+    { key: "dfPurpleHue", glslType: "float", default: 0 }, // 0 = off (use default purple detection)
+    { key: "dfGreenHue", glslType: "float", default: 0 }, // 0 = off (use default green detection)
+    { key: "dfRadius", glslType: "float", default: 50 }, // hue tolerance, degrees-ish
+  ],
+  glsl: `
+#if SL_PROCESS_VERSION >= 2
+    if (dfAmount >= 0.001) {
+      vec3 cd = clamp(c, 0.0, 1.0);${DEFRINGE_BODY}
     }
+#endif
   `,
+  produces: [
+    { name: DEFRINGE_SETTINGS, glslType: "vec4", producer: "vec4(dfAmount, dfPurpleHue, dfGreenHue, dfRadius)" },
+  ],
   // A mask's copy defringes again inside the mask with the mask's own amount and hues.
   mask: { maskable: true },
+};
+
+export const defringeV1Stage: ProcessingStageContribution = {
+  id: STAGE.defringeV1,
+  name: "Lens Defringe (version 1)",
+  phase: "effects",
+  priority: 100,
+  space: { encoding: "perceptual" },
+  uniforms: [],
+  consumes: [DEFRINGE_SETTINGS],
+  glsl: `
+#if SL_PROCESS_VERSION < 2
+    float dfAmount = isv_${DEFRINGE_SETTINGS}.x;
+    float dfPurpleHue = isv_${DEFRINGE_SETTINGS}.y;
+    float dfGreenHue = isv_${DEFRINGE_SETTINGS}.z;
+    float dfRadius = isv_${DEFRINGE_SETTINGS}.w;
+    if (dfAmount >= 0.001) {
+      c = clamp(c, 0.0, 1.0);
+      vec3 cd = c;${DEFRINGE_BODY}
+    }
+#endif
+  `,
 };
 
 /** Stages always registered (cheap inline corrections). The CA stage is
@@ -235,4 +270,5 @@ export const alwaysStages: ProcessingStageContribution[] = [
   distortionStage,
   vignetteStage,
   defringeStage,
+  defringeV1Stage,
 ];
