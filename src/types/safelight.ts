@@ -101,6 +101,10 @@ export interface ProcessingStageContribution {
    *  `c` clipped to [0, 1] on process version 2, the clip written ahead of its
    *  block and outside its own gate. Hosts before process versions ignore it. */
   space?: StageSpace;
+  /** The stage's result keeps the photo's own fine detail in place, so Dynamic
+   *  render resolution goes on adding detail while it is at work (Safelight
+   *  3.2.4; older hosts ignore it). */
+  keepsDetail?: boolean;
 }
 
 // ─── UI / lifecycle contributions ───────────────────────────────────────────

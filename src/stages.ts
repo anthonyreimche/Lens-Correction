@@ -73,6 +73,8 @@ export const caStage: ProcessingStageContribution = {
   // It replaces `lin` with a resample of the source, so it runs ahead of every
   // other decode stage, whose work it would otherwise discard.
   priority: 0,
+  // It moves the red and blue channels by a pixel or two and removes nothing.
+  keepsDetail: true,
   uniforms: [
     { key: "tcaModel", glslType: "int", default: 0 },
     { key: "caManual", glslType: "float", default: 0 },
