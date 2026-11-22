@@ -218,6 +218,19 @@ describe("masks", () => {
   });
 });
 
+// SafeLight #278: the CA stage came and went with the open photo's profile, so
+// thumbnails and exports of other photos drawn meanwhile gained or lost their
+// correction. It is registered for good and rests by each photo's own values.
+describe("chromatic aberration per photo", () => {
+  it("is registered with the other stages, for the extension's lifetime", () => {
+    expect(alwaysStages).toContain(caStage);
+  });
+
+  it("rests, passes and all, while the photo's own values correct nothing", () => {
+    expect(caStage.dormantWhen).toEqual({ tcaModel: 0, caManual: 0 });
+  });
+});
+
 // The CA inline replaces `lin` with a resample of the source, so a decode stage
 // ordered ahead of it (capture sharpening, moiré reduction) would be discarded.
 describe("decode order", () => {

@@ -207,14 +207,6 @@ function computeStageUniforms(state, profile, aspect) {
 	set(STAGE.defringe, "dfRadius", state.defringeRadius);
 	return out;
 }
-/** True when the CA decode prepass needs to run for this state+profile (used to
-*  register/unregister the expensive prepass stage rather than run it idle). */
-function caActive(state, profile) {
-	if (state.mode === "off") return false;
-	if (state.caAuto && (state.autoCaR !== 1 || state.autoCaB !== 1)) return true;
-	if (state.mode === "manual") return state.chromaticAberration > .001;
-	return state.caEnabled && !!profile?.tca;
-}
 
 //#endregion
 //#region data/lens-profiles.json
@@ -422946,6 +422938,11 @@ const caStage = {
 	name: "Lens Chromatic Aberration",
 	phase: "decode",
 	priority: 0,
+	keepsDetail: true,
+	dormantWhen: {
+		tcaModel: 0,
+		caManual: 0
+	},
 	uniforms: [{
 		key: "tcaModel",
 		glslType: "int",
@@ -423187,9 +423184,10 @@ const defringeV1Stage = {
 #endif
   `
 };
-/** Stages always registered (cheap inline corrections). The CA stage is
-*  registered on demand (its prepass shouldn't run when CA is inactive). */
+/** The stages, registered for the extension's lifetime. The CA stage's prepass
+*  runs only for photos whose own values correct CA (its dormantWhen). */
 const alwaysStages = [
+	caStage,
 	distortionStage,
 	vignetteStage,
 	defringeStage,
@@ -423200,7 +423198,6 @@ const alwaysStages = [
 //#region src/controller.ts
 let api;
 let uiStore = null;
-let caRegistered = false;
 let unsubDevelop = null;
 let resolveSeq = 0;
 let cacheKey = "";
@@ -423233,10 +423230,6 @@ function disposeController() {
 	unsubDevelop?.();
 	unsubDevelop = null;
 	for (const s of alwaysStages) api.unregisterProcessingStage(s.id);
-	if (caRegistered) {
-		api.unregisterProcessingStage(caStage.id);
-		caRegistered = false;
-	}
 	cacheKey = "";
 	cacheProfile = null;
 }
@@ -423334,14 +423327,6 @@ async function recompute() {
 		if (api.stores.useDevelopStore.getState().photoId !== photoId) return;
 		cacheKey = key;
 		cacheProfile = profile;
-	}
-	const wantCA = caActive(state, profile);
-	if (wantCA && !caRegistered) {
-		api.registerProcessingStage(caStage);
-		caRegistered = true;
-	} else if (!wantCA && caRegistered) {
-		api.unregisterProcessingStage(caStage.id);
-		caRegistered = false;
 	}
 	const uniforms = computeStageUniforms(state, profile, aspect);
 	api.stores.useDevelopStore.getState().setDynParams(uniforms);

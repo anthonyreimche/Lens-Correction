@@ -26,9 +26,8 @@ import {
   computeStageUniforms,
   normalizeState,
   defaultState,
-  caActive,
 } from "./params";
-import { caStage, alwaysStages } from "./stages";
+import { alwaysStages } from "./stages";
 
 export interface LensUIState {
   /** The profile actually applied to the GPU (null in off/manual or no match). */
@@ -57,7 +56,6 @@ let api: SafelightAPI;
 // zustand store hook created from api.stores.create — the panel calls it.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let uiStore: any = null;
-let caRegistered = false;
 let unsubDevelop: (() => void) | null = null;
 let resolveSeq = 0;
 
@@ -101,10 +99,6 @@ export function disposeController(): void {
   unsubDevelop?.();
   unsubDevelop = null;
   for (const s of alwaysStages) api.unregisterProcessingStage(s.id);
-  if (caRegistered) {
-    api.unregisterProcessingStage(caStage.id);
-    caRegistered = false;
-  }
   cacheKey = "";
   cacheProfile = null;
 }
@@ -222,16 +216,6 @@ export async function recompute(): Promise<void> {
     if (api.stores.useDevelopStore.getState().photoId !== photoId) return;
     cacheKey = key;
     cacheProfile = profile;
-  }
-
-  // CA prepass: register only when active (its prepass shouldn't run idle).
-  const wantCA = caActive(state, profile);
-  if (wantCA && !caRegistered) {
-    api.registerProcessingStage(caStage);
-    caRegistered = true;
-  } else if (!wantCA && caRegistered) {
-    api.unregisterProcessingStage(caStage.id);
-    caRegistered = false;
   }
 
   // Push stage uniforms.

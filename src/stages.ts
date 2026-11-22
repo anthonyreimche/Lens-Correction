@@ -75,6 +75,11 @@ export const caStage: ProcessingStageContribution = {
   priority: 0,
   // It moves the red and blue channels by a pixel or two and removes nothing.
   keepsDetail: true,
+  // Each photo's own values say whether it runs, passes included, so a photo
+  // without CA correction pays nothing, and the stage stays registered: added
+  // and taken away with the open photo, it reached or left out every
+  // thumbnail and export drawn meanwhile (SafeLight #278).
+  dormantWhen: { tcaModel: 0, caManual: 0 },
   uniforms: [
     { key: "tcaModel", glslType: "int", default: 0 },
     { key: "caManual", glslType: "float", default: 0 },
@@ -266,9 +271,10 @@ export const defringeV1Stage: ProcessingStageContribution = {
   `,
 };
 
-/** Stages always registered (cheap inline corrections). The CA stage is
- *  registered on demand (its prepass shouldn't run when CA is inactive). */
+/** The stages, registered for the extension's lifetime. The CA stage's prepass
+ *  runs only for photos whose own values correct CA (its dormantWhen). */
 export const alwaysStages: ProcessingStageContribution[] = [
+  caStage,
   distortionStage,
   vignetteStage,
   defringeStage,

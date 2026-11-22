@@ -128,13 +128,27 @@ beforeEach(() => {
       useCatalogStore: store<CatalogStoreState>({ photos }),
       create: <T>(init: () => T) => store(init()),
     },
-    registerProcessingStage: () => {},
-    unregisterProcessingStage: () => {},
+    registerProcessingStage: (c: { id: string }) => void stageCalls.push(`+${c.id}`),
+    unregisterProcessingStage: (id: string) => void stageCalls.push(`-${id}`),
   };
+  stageCalls.length = 0;
   initController(api as unknown as SafelightAPI);
 });
 
 afterEach(() => disposeController());
+
+const stageCalls: string[] = [];
+
+// SafeLight #278: other photos' thumbnails and exports drawn while a photo is
+// open keep their own correction, whatever the open photo's lens wants.
+describe("the stage set", () => {
+  it("holds the CA stage from the start, and as photos open", async () => {
+    expect(stageCalls).toContain("+com.safelight.lens-correction.ca");
+    await open("r5-1");
+    await open("g7x-1");
+    expect(stageCalls.filter((c) => c.endsWith(".ca"))).toEqual(["+com.safelight.lens-correction.ca"]);
+  });
+});
 
 describe("remembered lens picks", () => {
   it("remembers a pick on a fixed-lens body under the body", async () => {

@@ -105,6 +105,10 @@ export interface ProcessingStageContribution {
    *  render resolution goes on adding detail while it is at work (Safelight
    *  3.2.4; older hosts ignore it). */
   keepsDetail?: boolean;
+  /** Values at which the stage changes nothing: while the photo's bag holds
+   *  them, its passes don't run and the live view leaves it out of the program
+   *  (Safelight 3.2.1; older hosts ignore it). */
+  dormantWhen?: Readonly<Record<string, number | boolean | number[]>>;
 }
 
 // ─── UI / lifecycle contributions ───────────────────────────────────────────

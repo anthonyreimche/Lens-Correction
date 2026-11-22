@@ -217,11 +217,3 @@ export function computeStageUniforms(
   return out;
 }
 
-/** True when the CA decode prepass needs to run for this state+profile (used to
- *  register/unregister the expensive prepass stage rather than run it idle). */
-export function caActive(state: LensState, profile: ResolvedProfile | null): boolean {
-  if (state.mode === "off") return false;
-  if (state.caAuto && (state.autoCaR !== 1 || state.autoCaB !== 1)) return true;
-  if (state.mode === "manual") return state.chromaticAberration > 0.001;
-  return state.caEnabled && !!profile?.tca;
-}
