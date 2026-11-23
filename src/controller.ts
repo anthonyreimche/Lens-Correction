@@ -86,8 +86,10 @@ export function initController(a: SafelightAPI): void {
 
   for (const s of alwaysStages) api.registerProcessingStage(s);
 
+  // The stage values are computed, so they follow the photo and the panel's
+  // state: an undo, a paste or a preset changes that state without the panel.
   unsubDevelop = api.stores.useDevelopStore.subscribe((s, prev) => {
-    if (s.photoId !== prev.photoId) void recompute();
+    if (s.photoId !== prev.photoId || s.paramBag?.[STATE_KEY] !== prev.paramBag?.[STATE_KEY]) void recompute();
   });
   // Warm the DB and resolve the currently-open photo.
   void loadLensDb().then(() => recompute());

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ProcessingStageContribution, UniformDeclaration } from "./types/safelight";
 import { alwaysStages, caStage, defringeStage, defringeV1Stage, distortionStage, vignetteStage } from "./stages";
 import { distortionUniforms } from "./distortion";
+import { computeStageUniforms, defaultState } from "./params";
 import manifest from "../safelight.json";
 
 const stages = [distortionStage, caStage, vignetteStage, defringeStage, defringeV1Stage];
@@ -35,6 +36,24 @@ describe("stage uniform keys", () => {
 
   it("the CA prepass declares a radius scale for its polynomial", () => {
     expect(caStage.passes![0].uniforms!.find((u) => u.key === "tcaRScale")?.default).toBe(1);
+  });
+
+  // Every value the stages draw is worked out from the photo and the panel's
+  // state (kept under its own bag key), so none of them is an edit of its own:
+  // opening a photo must not mark it edited (SafeLight core 3.2.7).
+  it("declares every uniform computed, inline and in passes", () => {
+    for (const stage of stages) {
+      const declared = [...stage.uniforms, ...(stage.passes ?? []).flatMap((p) => p.uniforms ?? [])];
+      for (const u of declared) expect(u.computed, `${stage.id}.${u.key}`).toBe(true);
+    }
+  });
+
+  it("writes only uniforms it declares", () => {
+    const declared = new Set(
+      stages.flatMap((s) => [...s.uniforms, ...(s.passes ?? []).flatMap((p) => p.uniforms ?? [])].map((u) => `${s.id}.${u.key}`)),
+    );
+    const written = Object.keys(computeStageUniforms(defaultState(true), null, 1.5));
+    expect(written.filter((k) => !declared.has(k))).toEqual([]);
   });
 
   // The host substitutes uniform keys by naive replaceAll over each GLSL source.

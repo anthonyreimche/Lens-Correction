@@ -52,6 +52,10 @@ export interface UniformDeclaration {
   default: number | number[] | boolean;
   range?: { min: number; max: number; step?: number };
   label?: string;
+  /** Worked out by the extension for each photo, not set by the user: it rides
+   *  the photo's bag for every render but never counts as an edit (Safelight
+   *  3.2.7; older builds ignore it). */
+  computed?: boolean;
 }
 
 export type ProcessingPhase =

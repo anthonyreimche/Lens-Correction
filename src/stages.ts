@@ -11,6 +11,10 @@
 // IMPORTANT: the host compiler rewrites a stage's uniform `key`s by naive string
 // replaceAll over the GLSL, so every uniform key here is distinctive and is
 // never a substring of another key in the same stage nor of any local name.
+//
+// Every uniform is `computed`: the controller works it out from the photo and
+// the panel's state, which lives under its own bag key, so opening a photo
+// never marks it edited.
 
 import type { ProcessingStageContribution } from "./types/safelight";
 import { STAGE } from "./params";
@@ -24,13 +28,13 @@ export const distortionStage: ProcessingStageContribution = {
   name: "Lens Distortion",
   phase: "geometry",
   uniforms: [
-    { key: "distModel", glslType: "int", default: 0 },
-    { key: "distKA", glslType: "float", default: 0 },
-    { key: "distKB", glslType: "float", default: 0 },
-    { key: "distKC", glslType: "float", default: 0 },
-    { key: "distRScale", glslType: "float", default: 1 },
-    { key: "distManual", glslType: "float", default: 0 },
-    { key: "cropScale", glslType: "float", default: 1 },
+    { key: "distModel", glslType: "int", default: 0, computed: true },
+    { key: "distKA", glslType: "float", default: 0, computed: true },
+    { key: "distKB", glslType: "float", default: 0, computed: true },
+    { key: "distKC", glslType: "float", default: 0, computed: true },
+    { key: "distRScale", glslType: "float", default: 1, computed: true },
+    { key: "distManual", glslType: "float", default: 0, computed: true },
+    { key: "cropScale", glslType: "float", default: 1, computed: true },
   ],
   glsl: `
     vec2 cen = srcUv - 0.5;
@@ -81,22 +85,22 @@ export const caStage: ProcessingStageContribution = {
   // thumbnail and export drawn meanwhile (SafeLight #278).
   dormantWhen: { tcaModel: 0, caManual: 0 },
   uniforms: [
-    { key: "tcaModel", glslType: "int", default: 0 },
-    { key: "caManual", glslType: "float", default: 0 },
+    { key: "tcaModel", glslType: "int", default: 0, computed: true },
+    { key: "caManual", glslType: "float", default: 0, computed: true },
   ],
   passes: [
     {
       uniforms: [
-        { key: "tcaModel", glslType: "int", default: 0 },
-        { key: "tcaKR", glslType: "float", default: 1 },
-        { key: "tcaKB", glslType: "float", default: 1 },
-        { key: "tcaBR", glslType: "float", default: 0 },
-        { key: "tcaCR", glslType: "float", default: 0 },
-        { key: "tcaBB", glslType: "float", default: 0 },
-        { key: "tcaCB", glslType: "float", default: 0 },
-        { key: "tcaRScale", glslType: "float", default: 1 },
-        { key: "caManual", glslType: "float", default: 0 },
-        { key: "caAspect", glslType: "float", default: 1.5 },
+        { key: "tcaModel", glslType: "int", default: 0, computed: true },
+        { key: "tcaKR", glslType: "float", default: 1, computed: true },
+        { key: "tcaKB", glslType: "float", default: 1, computed: true },
+        { key: "tcaBR", glslType: "float", default: 0, computed: true },
+        { key: "tcaCR", glslType: "float", default: 0, computed: true },
+        { key: "tcaBB", glslType: "float", default: 0, computed: true },
+        { key: "tcaCB", glslType: "float", default: 0, computed: true },
+        { key: "tcaRScale", glslType: "float", default: 1, computed: true },
+        { key: "caManual", glslType: "float", default: 0, computed: true },
+        { key: "caAspect", glslType: "float", default: 1.5, computed: true },
       ],
       glsl: `
         vec2 cen = vUv - 0.5;
@@ -143,10 +147,10 @@ export const vignetteStage: ProcessingStageContribution = {
   name: "Lens Vignetting",
   phase: "scene-linear",
   uniforms: [
-    { key: "vigK1", glslType: "float", default: 0 },
-    { key: "vigK2", glslType: "float", default: 0 },
-    { key: "vigK3", glslType: "float", default: 0 },
-    { key: "vigManual", glslType: "float", default: 0 },
+    { key: "vigK1", glslType: "float", default: 0, computed: true },
+    { key: "vigK2", glslType: "float", default: 0, computed: true },
+    { key: "vigK3", glslType: "float", default: 0, computed: true },
+    { key: "vigManual", glslType: "float", default: 0, computed: true },
   ],
   glsl: `
     vec2 cen = sensorUv - 0.5;
@@ -230,10 +234,10 @@ export const defringeStage: ProcessingStageContribution = {
   priority: 0,
   space: { encoding: "perceptual" },
   uniforms: [
-    { key: "dfAmount", glslType: "float", default: 0 },
-    { key: "dfPurpleHue", glslType: "float", default: 0 }, // 0 = off (use default purple detection)
-    { key: "dfGreenHue", glslType: "float", default: 0 }, // 0 = off (use default green detection)
-    { key: "dfRadius", glslType: "float", default: 50 }, // hue tolerance, degrees-ish
+    { key: "dfAmount", glslType: "float", default: 0, computed: true },
+    { key: "dfPurpleHue", glslType: "float", default: 0, computed: true }, // 0 = off (use default purple detection)
+    { key: "dfGreenHue", glslType: "float", default: 0, computed: true }, // 0 = off (use default green detection)
+    { key: "dfRadius", glslType: "float", default: 50, computed: true }, // hue tolerance, degrees-ish
   ],
   glsl: `
 #if SL_PROCESS_VERSION >= 2

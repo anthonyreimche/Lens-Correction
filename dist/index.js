@@ -422873,37 +422873,44 @@ const distortionStage = {
 		{
 			key: "distModel",
 			glslType: "int",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "distKA",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "distKB",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "distKC",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "distRScale",
 			glslType: "float",
-			default: 1
+			default: 1,
+			computed: true
 		},
 		{
 			key: "distManual",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "cropScale",
 			glslType: "float",
-			default: 1
+			default: 1,
+			computed: true
 		}
 	],
 	glsl: `
@@ -422946,63 +422953,75 @@ const caStage = {
 	uniforms: [{
 		key: "tcaModel",
 		glslType: "int",
-		default: 0
+		default: 0,
+		computed: true
 	}, {
 		key: "caManual",
 		glslType: "float",
-		default: 0
+		default: 0,
+		computed: true
 	}],
 	passes: [{
 		uniforms: [
 			{
 				key: "tcaModel",
 				glslType: "int",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "tcaKR",
 				glslType: "float",
-				default: 1
+				default: 1,
+				computed: true
 			},
 			{
 				key: "tcaKB",
 				glslType: "float",
-				default: 1
+				default: 1,
+				computed: true
 			},
 			{
 				key: "tcaBR",
 				glslType: "float",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "tcaCR",
 				glslType: "float",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "tcaBB",
 				glslType: "float",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "tcaCB",
 				glslType: "float",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "tcaRScale",
 				glslType: "float",
-				default: 1
+				default: 1,
+				computed: true
 			},
 			{
 				key: "caManual",
 				glslType: "float",
-				default: 0
+				default: 0,
+				computed: true
 			},
 			{
 				key: "caAspect",
 				glslType: "float",
-				default: 1.5
+				default: 1.5,
+				computed: true
 			}
 		],
 		glsl: `
@@ -423049,22 +423068,26 @@ const vignetteStage = {
 		{
 			key: "vigK1",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "vigK2",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "vigK3",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "vigManual",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		}
 	],
 	glsl: `
@@ -423131,22 +423154,26 @@ const defringeStage = {
 		{
 			key: "dfAmount",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "dfPurpleHue",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "dfGreenHue",
 			glslType: "float",
-			default: 0
+			default: 0,
+			computed: true
 		},
 		{
 			key: "dfRadius",
 			glslType: "float",
-			default: 50
+			default: 50,
+			computed: true
 		}
 	],
 	glsl: `
@@ -423220,7 +423247,7 @@ function initController(a) {
 	}));
 	for (const s of alwaysStages) api.registerProcessingStage(s);
 	unsubDevelop = api.stores.useDevelopStore.subscribe((s, prev) => {
-		if (s.photoId !== prev.photoId) recompute();
+		if (s.photoId !== prev.photoId || s.paramBag?.[STATE_KEY] !== prev.paramBag?.[STATE_KEY]) recompute();
 	});
 	loadLensDb().then(() => recompute());
 	recompute();

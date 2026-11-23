@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CatalogPhoto, CatalogStoreState, DevelopStoreState, SafelightAPI, StoreApi } from "./types/safelight";
 import type { LensfunLens } from "./db/types";
+import { STATE_KEY } from "./params";
 import {
   disposeController,
   getUIStore,
@@ -147,6 +148,31 @@ describe("the stage set", () => {
     await open("r5-1");
     await open("g7x-1");
     expect(stageCalls.filter((c) => c.endsWith(".ca"))).toEqual(["+com.safelight.lens-correction.ca"]);
+  });
+});
+
+// Undo, redo, a paste or a preset can change the panel's state without changing
+// the photo; the values drawn must follow it, since they never count as an edit
+// of their own and so aren't restored with it reliably.
+describe("working the values out again", () => {
+  it("follows a change of its own state the panel didn't make", async () => {
+    const pushed: Record<string, unknown>[] = [];
+    develop.setState({ setDynParams: (patch) => void pushed.push(patch) });
+    await open("r5-1");
+    expect(pushed.at(-1)?.["com.safelight.lens-correction.distortion.distModel"]).not.toBe(0);
+
+    develop.setState({ paramBag: { [STATE_KEY]: { mode: "off" } } });
+    await vi.waitFor(() => expect(pushed.at(-1)?.["com.safelight.lens-correction.distortion.distModel"]).toBe(0));
+  });
+
+  it("leaves other bag changes alone", async () => {
+    const pushed: Record<string, unknown>[] = [];
+    develop.setState({ setDynParams: (patch) => void pushed.push(patch) });
+    await open("r5-1");
+    const before = pushed.length;
+    develop.setState({ paramBag: { ...develop.getState().paramBag, "other.stage.amount": 1 } });
+    await Promise.resolve();
+    expect(pushed.length).toBe(before);
   });
 });
 
