@@ -424496,6 +424496,7 @@ function activate(api) {
 			order: 9,
 			width: 280
 		},
+		modules: ["develop"],
 		mask: {
 			component: createLensMaskPanel(api),
 			owns: MASK_KEYS

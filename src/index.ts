@@ -44,6 +44,7 @@ export function activate(api: SafelightAPI): void {
     slot: "develop-right",
     order: 120,
     defaultDock: { module: "develop", direction: "right", order: 9, width: 280 },
+    modules: ["develop"],
     // A mask's own vignetting and defringe, in the Masking panel's Adjust tab.
     mask: { component: createLensMaskPanel(api), owns: MASK_KEYS },
   });

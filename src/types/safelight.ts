@@ -132,6 +132,8 @@ export interface PanelContribution {
   slot?: "develop-right" | "develop-left" | "none";
   order?: number;
   defaultDock?: PanelDockDefault;
+  /** The modules the panel may be docked in; omitted, every module (Safelight 3.2.8). */
+  modules?: readonly string[];
   onReset?: () => void;
   headerAccessory?: any;
   /** Offers a panel in a mask's Adjust tab: each mask that adds it renders
